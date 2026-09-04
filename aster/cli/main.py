@@ -19,7 +19,13 @@ from aster.data.jsonl import append_observations
 from aster.data.load import load_training_examples
 from aster.experiments import evaluate_fallback_policy, evaluate_ranking, fallback_pareto_sweep, template_holdout
 from aster.integration.psql import PsqlExplainRunner, read_query
-from aster.models import PostgresCostRanker, RidgeRuntimeModel, RuntimeEnsemble
+from aster.models import (
+    PairwiseLogisticRanker,
+    PostgresCostRanker,
+    QueryNormalizedRidgeModel,
+    RidgeRuntimeModel,
+    RuntimeEnsemble,
+)
 from aster.ranking import rank_with_fallback
 
 
@@ -51,12 +57,19 @@ def cmd_train(args):
     integrity = audit_dataset(args.dataset)
     if not integrity.ok: raise SystemExit("dataset integrity audit failed:\n- " + "\n- ".join(integrity.errors))
     examples = load_training_examples(args.dataset); split = template_holdout(examples,test_fraction=args.test_fraction,seed=args.seed)
-    train,test=list(split.train),list(split.test); postgres_cost=PostgresCostRanker(); ridge=RidgeRuntimeModel(alpha=args.ridge_alpha).fit(train)
+    train,test=list(split.train),list(split.test)
+    postgres_cost=PostgresCostRanker()
+    ridge=RidgeRuntimeModel(alpha=args.ridge_alpha).fit(train)
+    normalized=QueryNormalizedRidgeModel(alpha=args.ridge_alpha).fit(train)
+    pairwise=PairwiseLogisticRanker(c=args.pairwise_c,seed=args.seed).fit(train)
     model=RuntimeEnsemble(trees=args.trees,seed=args.seed,min_samples_leaf=args.min_samples_leaf).fit(train)
     metadata={"model":"random_forest_runtime_baseline","seed":args.seed,"dataset":str(args.dataset),"dataset_integrity":asdict(integrity),
               "train_examples":len(train),"test_examples":len(test),"train_templates":sorted(split.train_groups),"test_templates":sorted(split.test_groups),
+              "objective_metadata":{"pairwise_training_pairs":pairwise.training_pairs},
               "baseline_metrics":{"postgres_estimated_cost":asdict(evaluate_ranking(postgres_cost,test)),
                                   "ridge_log_runtime":asdict(evaluate_ranking(ridge,test)),
+                                  "ridge_query_normalized_runtime":asdict(evaluate_ranking(normalized,test)),
+                                  "pairwise_logistic_ranking":asdict(evaluate_ranking(pairwise,test)),
                                   "random_forest_runtime":asdict(evaluate_ranking(model,test))},
               "fallback_metrics":asdict(evaluate_fallback_policy(model,test)),
               "fallback_pareto":[{"max_log_std":p.max_log_std,"min_predicted_gain":p.min_predicted_gain,"metrics":asdict(p.metrics)} for p in fallback_pareto_sweep(model,test)],
@@ -140,7 +153,7 @@ def build_parser():
     collect=sub.add_parser("collect"); db_args(collect); collect.add_argument("--out",type=Path,required=True); collect.add_argument("--code-revision"); collect.set_defaults(func=cmd_collect)
     train=sub.add_parser("train"); train.add_argument("--dataset",type=Path,required=True); train.add_argument("--model-out",type=Path,required=True)
     train.add_argument("--test-fraction",type=float,default=.2); train.add_argument("--seed",type=int,default=7); train.add_argument("--trees",type=int,default=128)
-    train.add_argument("--min-samples-leaf",type=int,default=2); train.add_argument("--ridge-alpha",type=float,default=1.0); train.set_defaults(func=cmd_train)
+    train.add_argument("--min-samples-leaf",type=int,default=2); train.add_argument("--ridge-alpha",type=float,default=1.0); train.add_argument("--pairwise-c",type=float,default=1.0); train.set_defaults(func=cmd_train)
     audit=sub.add_parser("audit-dataset"); audit.add_argument("--dataset",type=Path,required=True); audit.set_defaults(func=cmd_audit_dataset)
     optimize=sub.add_parser("optimize"); db_args(optimize); optimize.add_argument("--model",type=Path,required=True); risk_args(optimize); optimize.set_defaults(func=cmd_optimize)
     benchmark=sub.add_parser("benchmark"); db_args(benchmark); benchmark.add_argument("--model",type=Path,required=True); benchmark.add_argument("--out",type=Path); risk_args(benchmark)
