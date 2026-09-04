@@ -47,7 +47,12 @@ def _group_candidates(examples):
     grouped = defaultdict(list)
     for example in examples:
         if example.runtime_ms <= 0: raise ValueError("measured runtime must be positive")
-        grouped[(example.dataset_version or "", example.workload or "", example.query_id)].append(example)
+        grouped[(
+            example.environment_sha256 or "",
+            example.dataset_version or "",
+            example.workload or "",
+            example.query_id,
+        )].append(example)
     return grouped
 
 
@@ -60,7 +65,7 @@ def _metrics(speedups, oracle, regressions):
 
 def evaluate_ranking(model: PlanScorer, examples: list[TrainingExample]) -> RankingMetrics:
     speedups, oracle, regressions = [], [], []
-    for (_, _, query_id), candidates in _group_candidates(examples).items():
+    for (_, _, _, query_id), candidates in _group_candidates(examples).items():
         native = next((e for e in candidates if e.candidate_id == "native"), None)
         if native is None: raise ValueError(f"query {query_id} has no native candidate")
         selected = min(candidates, key=lambda e: model.score(e.plan))
@@ -79,7 +84,7 @@ def evaluate_fallback_policy(model: RuntimeEnsemble, examples: list[TrainingExam
                              domain_margin: float = 0.15, max_domain_distance: float = 4.0,
                              max_outside_features: int = 4) -> FallbackMetrics:
     speedups, oracle, regressions = [], [], []; fallback_count = 0
-    for (_, _, query_id), candidates in _group_candidates(examples).items():
+    for (_, _, _, query_id), candidates in _group_candidates(examples).items():
         native = next((e for e in candidates if e.candidate_id == "native"), None)
         if native is None: raise ValueError(f"query {query_id} has no native candidate")
         predictions = [(c, model.predict(c.plan)) for c in candidates]
