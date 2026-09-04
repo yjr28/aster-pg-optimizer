@@ -17,23 +17,8 @@ from aster.candidates import CandidateCollector, default_candidates
 from aster.data import audit_dataset
 from aster.data.jsonl import append_observations
 from aster.data.load import load_training_examples
-from aster.experiments import (
-    evaluate_fallback_policy,
-    evaluate_ranking,
-    fallback_pareto_sweep,
-    parameter_holdout,
-    query_holdout,
-    template_holdout,
-    workload_holdout,
-)
+from aster.experiments import TrainingProtocol, run_training_experiment
 from aster.integration.psql import PsqlExplainRunner, read_query
-from aster.models import (
-    PairwiseLogisticRanker,
-    PostgresCostRanker,
-    QueryNormalizedRidgeModel,
-    RidgeRuntimeModel,
-    RuntimeEnsemble,
-)
 from aster.ranking import rank_with_fallback
 
 
@@ -61,81 +46,38 @@ def cmd_collect(args):
                       "unique_plans":len(discovered),"observations_written":total,"out":str(args.out)}, sort_keys=True)); return 0
 
 
-def _training_split(examples, args):
-    splitters={
-        "template": template_holdout,
-        "parameter": parameter_holdout,
-        "workload": workload_holdout,
-    }
-    return splitters[args.split_regime](
-        examples,
-        test_fraction=args.test_fraction,
-        seed=args.seed,
-    )
-
-
-def _calibration_diagnostics(model, examples):
-    if not examples or model.calibrator is None:
-        return {"enabled":False,"examples":0}
-    covered=0; relative_widths=[]
-    for example in examples:
-        prediction=model.predict(example.plan)
-        assert prediction.interval_lower_ms is not None and prediction.interval_upper_ms is not None
-        covered += int(prediction.interval_lower_ms <= example.runtime_ms <= prediction.interval_upper_ms)
-        relative_widths.append((prediction.interval_upper_ms-prediction.interval_lower_ms)/example.runtime_ms)
-    calibrator=model.calibrator
-    return {
-        "enabled":True,
-        "examples":len(examples),
-        "alpha":calibrator.alpha,
-        "target_coverage":calibrator.target_coverage,
-        "empirical_calibration_coverage":covered/len(examples),
-        "quantile":calibrator.quantile,
-        "min_log_scale":calibrator.min_log_scale,
-        "mean_relative_interval_width":sum(relative_widths)/len(relative_widths),
-    }
-
-
 def cmd_train(args):
     integrity = audit_dataset(args.dataset)
-    if not integrity.ok: raise SystemExit("dataset integrity audit failed:\n- " + "\n- ".join(integrity.errors))
-    if not 0 <= args.calibration_fraction < 1:
-        raise SystemExit("calibration_fraction must be in [0, 1)")
-    examples = load_training_examples(args.dataset); split = _training_split(examples,args)
-    primary_train,test=list(split.train),list(split.test)
-    if args.calibration_fraction > 0:
-        calibration_split=query_holdout(
-            primary_train,
-            test_fraction=args.calibration_fraction,
-            seed=args.seed+101,
-        )
-        train=list(calibration_split.train); calibration=list(calibration_split.test)
-        calibration_groups=sorted(calibration_split.test_groups)
-    else:
-        train=primary_train; calibration=[]; calibration_groups=[]
-
-    postgres_cost=PostgresCostRanker()
-    ridge=RidgeRuntimeModel(alpha=args.ridge_alpha).fit(train)
-    normalized=QueryNormalizedRidgeModel(alpha=args.ridge_alpha).fit(train)
-    pairwise=PairwiseLogisticRanker(c=args.pairwise_c,seed=args.seed).fit(train)
-    model=RuntimeEnsemble(trees=args.trees,seed=args.seed,min_samples_leaf=args.min_samples_leaf).fit(train)
-    if calibration:
-        model.calibrate(calibration,alpha=args.conformal_alpha,min_log_scale=args.min_log_scale)
-    metadata={"model":"random_forest_runtime_baseline","seed":args.seed,"dataset":str(args.dataset),"dataset_integrity":asdict(integrity),
-              "split_regime":args.split_regime,"test_fraction":args.test_fraction,
-              "primary_train_examples":len(primary_train),"fit_examples":len(train),"calibration_examples":len(calibration),"test_examples":len(test),
-              "train_groups":sorted(split.train_groups),"test_groups":sorted(split.test_groups),"calibration_query_groups":calibration_groups,
-              "calibration":_calibration_diagnostics(model,calibration),
-              "objective_metadata":{"pairwise_training_pairs":pairwise.training_pairs},
-              "baseline_metrics":{"postgres_estimated_cost":asdict(evaluate_ranking(postgres_cost,test)),
-                                  "ridge_log_runtime":asdict(evaluate_ranking(ridge,test)),
-                                  "ridge_query_normalized_runtime":asdict(evaluate_ranking(normalized,test)),
-                                  "pairwise_logistic_ranking":asdict(evaluate_ranking(pairwise,test)),
-                                  "random_forest_runtime":asdict(evaluate_ranking(model,test))},
-              "fallback_metrics":asdict(evaluate_fallback_policy(model,test)),
-              "fallback_pareto":[{"max_log_std":p.max_log_std,"min_predicted_gain":p.min_predicted_gain,"metrics":asdict(p.metrics)} for p in fallback_pareto_sweep(model,test)],
-              "code_revision":_revision(),"python":sys.version,"platform":platform.platform()}
-    save_model(args.model_out,model,metadata); print(json.dumps(metadata,indent=2,sort_keys=True)); return 0
+    if not integrity.ok:
+        raise SystemExit("dataset integrity audit failed:\n- " + "\n- ".join(integrity.errors))
+    examples = load_training_examples(args.dataset)
+    protocol = TrainingProtocol(
+        split_regime=args.split_regime,
+        test_fraction=args.test_fraction,
+        calibration_fraction=args.calibration_fraction,
+        conformal_alpha=args.conformal_alpha,
+        min_log_scale=args.min_log_scale,
+        seed=args.seed,
+        trees=args.trees,
+        min_samples_leaf=args.min_samples_leaf,
+        ridge_alpha=args.ridge_alpha,
+        pairwise_c=args.pairwise_c,
+    )
+    model, experiment = run_training_experiment(examples, protocol)
+    metadata = {
+        "model":"random_forest_runtime_baseline",
+        "seed":args.seed,
+        "dataset":str(args.dataset),
+        "dataset_integrity":asdict(integrity),
+        "training_protocol":asdict(protocol),
+        **experiment.to_jsonable(),
+        "code_revision":_revision(),
+        "python":sys.version,
+        "platform":platform.platform(),
+    }
+    save_model(args.model_out,model,metadata)
+    print(json.dumps(metadata,indent=2,sort_keys=True))
+    return 0
 
 
 def _decision(runner, query, model, args):
