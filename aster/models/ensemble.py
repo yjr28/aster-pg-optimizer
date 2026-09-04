@@ -9,6 +9,7 @@ from sklearn.feature_extraction import DictVectorizer
 
 from aster.features.baseline import baseline_feature_dict
 from aster.plans.types import PlanDocument
+from aster.uncertainty import FeatureDomain
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,9 @@ class RuntimePrediction:
     runtime_ms: float
     log_std: float
     root_cost_log: float
+    domain_distance: float
+    outside_training_range_count: int
+    unseen_structural_features: tuple[str, ...]
 
 
 class RuntimeEnsemble:
@@ -35,40 +39,29 @@ class RuntimeEnsemble:
         self.vectorizer = DictVectorizer(sparse=False)
         self.model = RandomForestRegressor(n_estimators=trees, random_state=seed,
                                            min_samples_leaf=min_samples_leaf, n_jobs=1)
-        self._fitted = False
-        self._root_cost_range: tuple[float, float] | None = None
+        self._fitted = False; self._root_cost_range = None; self._feature_domain = None
 
     def fit(self, examples: list[TrainingExample]) -> "RuntimeEnsemble":
-        if len(examples) < 4:
-            raise ValueError("at least 4 training examples are required")
-        if any(example.runtime_ms <= 0 for example in examples):
-            raise ValueError("runtime labels must be positive")
-        dicts = [baseline_feature_dict(example.plan) for example in examples]
-        x = self.vectorizer.fit_transform(dicts)
-        y = np.log1p([example.runtime_ms for example in examples])
-        self.model.fit(x, y)
-        costs = [float(d["root_total_cost_log"]) for d in dicts]
-        self._root_cost_range = (min(costs), max(costs))
-        self._fitted = True
+        if len(examples) < 4: raise ValueError("at least 4 training examples are required")
+        if any(e.runtime_ms <= 0 for e in examples): raise ValueError("runtime labels must be positive")
+        rows = [baseline_feature_dict(e.plan) for e in examples]
+        self.model.fit(self.vectorizer.fit_transform(rows), np.log1p([e.runtime_ms for e in examples]))
+        costs = [float(row["root_total_cost_log"]) for row in rows]
+        self._root_cost_range = (min(costs), max(costs)); self._feature_domain = FeatureDomain.fit(rows); self._fitted = True
         return self
 
-    def score(self, plan: PlanDocument) -> float:
-        return self.predict(plan).runtime_ms
+    def score(self, plan: PlanDocument) -> float: return self.predict(plan).runtime_ms
 
     def predict(self, plan: PlanDocument) -> RuntimePrediction:
-        if not self._fitted:
-            raise RuntimeError("model is not fitted")
-        features = baseline_feature_dict(plan)
-        x = self.vectorizer.transform([features])
-        tree_predictions = np.array([tree.predict(x)[0] for tree in self.model.estimators_])
-        log_mean = float(tree_predictions.mean())
-        return RuntimePrediction(runtime_ms=max(1e-9, math.expm1(log_mean)),
-                                 log_std=float(tree_predictions.std(ddof=0)),
-                                 root_cost_log=float(features["root_total_cost_log"]))
+        if not self._fitted or self._feature_domain is None: raise RuntimeError("model is not fitted")
+        features = baseline_feature_dict(plan); x = self.vectorizer.transform([features])
+        predictions = np.array([tree.predict(x)[0] for tree in self.model.estimators_])
+        domain = self._feature_domain.assess(features)
+        return RuntimePrediction(max(1e-9, math.expm1(float(predictions.mean()))), float(predictions.std(ddof=0)),
+                                 float(features["root_total_cost_log"]), domain.rms_z_distance,
+                                 domain.outside_training_range_count, domain.unseen_structural_features)
 
     def in_training_cost_domain(self, prediction: RuntimePrediction, *, margin: float = 0.15) -> bool:
-        if self._root_cost_range is None:
-            raise RuntimeError("model is not fitted")
-        low, high = self._root_cost_range
-        span = max(1e-9, high - low)
+        if self._root_cost_range is None: raise RuntimeError("model is not fitted")
+        low, high = self._root_cost_range; span = max(1e-9, high - low)
         return low - margin * span <= prediction.root_cost_log <= high + margin * span
