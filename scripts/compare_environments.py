@@ -4,7 +4,11 @@ import argparse
 import json
 from pathlib import Path
 
-from aster.benchmarks import compare_benchmark_environments
+from aster.benchmarks import (
+    ENVIRONMENT_DIFF_SECTIONS,
+    compare_benchmark_environments,
+    validate_perturbation,
+)
 
 
 def _load(path: Path) -> dict:
@@ -29,15 +33,45 @@ def main(argv=None) -> int:
         action="store_true",
         help="exit nonzero when the two environment fingerprints are identical",
     )
+    parser.add_argument(
+        "--allow-section",
+        action="append",
+        choices=sorted(ENVIRONMENT_DIFF_SECTIONS),
+        help="declare a change section that is allowed; repeat for multiple sections",
+    )
+    parser.add_argument(
+        "--require-section",
+        action="append",
+        choices=sorted(ENVIRONMENT_DIFF_SECTIONS),
+        help="declare an allowed section that must actually change",
+    )
     args=parser.parse_args(argv)
     diff=compare_benchmark_environments(_load(args.before),_load(args.after))
-    encoded=json.dumps(diff.to_jsonable(),indent=2,sort_keys=True)
+    payload=diff.to_jsonable()
+
+    validation=None
+    if args.allow_section is not None or args.require_section is not None:
+        allowed=tuple(args.allow_section or ())
+        required=tuple(args.require_section or ())
+        try:
+            validation=validate_perturbation(
+                diff,
+                allowed_sections=allowed,
+                required_sections=required,
+            )
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        payload["perturbation_validation"]=validation.to_jsonable()
+
+    encoded=json.dumps(payload,indent=2,sort_keys=True)
     if args.out:
         args.out.parent.mkdir(parents=True,exist_ok=True)
         args.out.write_text(encoded+"\n",encoding="utf-8")
     print(encoded)
     if args.require_change and diff.identical_fingerprint:
         return 2
+    if validation is not None and not validation.valid:
+        return 3
     return 0
 
 
