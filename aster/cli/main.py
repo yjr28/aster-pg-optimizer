@@ -8,9 +8,11 @@ import subprocess
 import sys
 from dataclasses import asdict
 from pathlib import Path
+from time import perf_counter_ns
 from uuid import uuid4
 
 from aster.artifacts import load_model, save_model
+from aster.benchmarks import run_paired_benchmark
 from aster.candidates import CandidateCollector, default_candidates
 from aster.data import audit_dataset
 from aster.data.jsonl import append_observations
@@ -62,12 +64,22 @@ def cmd_train(args):
     save_model(args.model_out,model,metadata); print(json.dumps(metadata,indent=2,sort_keys=True)); return 0
 
 
+def _decision(runner, query, model, args):
+    collector = CandidateCollector(runner)
+    started = perf_counter_ns()
+    discovered = collector.discover(query, default_candidates())
+    decision = rank_with_fallback(model, discovered, max_log_std=args.max_log_std,
+                                  min_predicted_gain=args.min_predicted_gain,
+                                  domain_margin=args.domain_margin,
+                                  max_domain_distance=args.max_domain_distance,
+                                  max_outside_features=args.max_outside_features)
+    selection_overhead_ms = (perf_counter_ns() - started) / 1_000_000
+    return collector, discovered, decision, selection_overhead_ms
+
+
 def cmd_optimize(args):
-    runner=_runner(args); query=read_query(args.sql_file); model=load_model(args.model); collector=CandidateCollector(runner)
-    discovered=collector.discover(query,default_candidates())
-    decision=rank_with_fallback(model,discovered,max_log_std=args.max_log_std,min_predicted_gain=args.min_predicted_gain,
-                                domain_margin=args.domain_margin,max_domain_distance=args.max_domain_distance,
-                                max_outside_features=args.max_outside_features)
+    runner=_runner(args); query=read_query(args.sql_file); model=load_model(args.model)
+    collector,discovered,decision,_selection_overhead_ms=_decision(runner,query,model,args)
     measured=collector.measure(query,decision.selected,workload=args.workload,query_id=args.query_id,
                                dataset_version=args.dataset_version,run_seed=args.seed,code_revision=_revision(),
                                experiment_id=args.experiment_id or str(uuid4()),query_template=args.query_template,
@@ -81,6 +93,35 @@ def cmd_optimize(args):
     print(json.dumps(result,indent=2,sort_keys=True)); return 0
 
 
+def cmd_benchmark(args):
+    runner=_runner(args); query=read_query(args.sql_file); model=load_model(args.model)
+    _collector,discovered,decision,selection_overhead_ms=_decision(runner,query,model,args)
+    benchmark=run_paired_benchmark(runner,query,decision.native,decision.selected,
+                                   selection_overhead_ms=selection_overhead_ms,
+                                   warmups=args.warmups,repetitions=args.repetitions,seed=args.seed)
+    payload={
+        "experiment_id":args.experiment_id or str(uuid4()),
+        "workload":args.workload,
+        "query_id":args.query_id,
+        "query_template":args.query_template,
+        "parameter_key":args.parameter_key,
+        "dataset_version":args.dataset_version,
+        "seed":args.seed,
+        "code_revision":_revision(),
+        "unique_candidates":len(discovered),
+        "fallback":decision.fallback,
+        "fallback_reason":decision.reason,
+        "ranking_only_overhead_ms":decision.decision_overhead_ms,
+        "selection_overhead_ms":selection_overhead_ms,
+        "benchmark":benchmark.to_jsonable(),
+    }
+    encoded=json.dumps(payload,indent=2,sort_keys=True)
+    if args.out:
+        args.out.parent.mkdir(parents=True,exist_ok=True)
+        args.out.write_text(encoded+"\n",encoding="utf-8")
+    print(encoded); return 0
+
+
 def cmd_audit_dataset(args):
     report=audit_dataset(args.dataset); print(json.dumps(asdict(report),indent=2,sort_keys=True)); return 0 if report.ok else 2
 
@@ -92,15 +133,18 @@ def build_parser():
         p.add_argument("--workload",required=True); p.add_argument("--query-id",required=True); p.add_argument("--query-template"); p.add_argument("--parameter-key")
         p.add_argument("--dataset-version",required=True); p.add_argument("--seed",type=int,default=7); p.add_argument("--warmups",type=int,default=1)
         p.add_argument("--repetitions",type=int,default=3); p.add_argument("--experiment-id")
+    def risk_args(p):
+        p.add_argument("--max-log-std",type=float,default=.45); p.add_argument("--min-predicted-gain",type=float,default=.10)
+        p.add_argument("--domain-margin",type=float,default=.15); p.add_argument("--max-domain-distance",type=float,default=4.0)
+        p.add_argument("--max-outside-features",type=int,default=4)
     collect=sub.add_parser("collect"); db_args(collect); collect.add_argument("--out",type=Path,required=True); collect.add_argument("--code-revision"); collect.set_defaults(func=cmd_collect)
     train=sub.add_parser("train"); train.add_argument("--dataset",type=Path,required=True); train.add_argument("--model-out",type=Path,required=True)
     train.add_argument("--test-fraction",type=float,default=.2); train.add_argument("--seed",type=int,default=7); train.add_argument("--trees",type=int,default=128)
     train.add_argument("--min-samples-leaf",type=int,default=2); train.add_argument("--ridge-alpha",type=float,default=1.0); train.set_defaults(func=cmd_train)
     audit=sub.add_parser("audit-dataset"); audit.add_argument("--dataset",type=Path,required=True); audit.set_defaults(func=cmd_audit_dataset)
-    optimize=sub.add_parser("optimize"); db_args(optimize); optimize.add_argument("--model",type=Path,required=True)
-    optimize.add_argument("--max-log-std",type=float,default=.45); optimize.add_argument("--min-predicted-gain",type=float,default=.10)
-    optimize.add_argument("--domain-margin",type=float,default=.15); optimize.add_argument("--max-domain-distance",type=float,default=4.0)
-    optimize.add_argument("--max-outside-features",type=int,default=4); optimize.set_defaults(func=cmd_optimize)
+    optimize=sub.add_parser("optimize"); db_args(optimize); optimize.add_argument("--model",type=Path,required=True); risk_args(optimize); optimize.set_defaults(func=cmd_optimize)
+    benchmark=sub.add_parser("benchmark"); db_args(benchmark); benchmark.add_argument("--model",type=Path,required=True); benchmark.add_argument("--out",type=Path); risk_args(benchmark)
+    benchmark.set_defaults(func=cmd_benchmark,warmups=2,repetitions=15)
     return parser
 
 
