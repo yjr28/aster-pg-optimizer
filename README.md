@@ -1,8 +1,8 @@
 # Aster — Learned Query Optimization for PostgreSQL
 
-Aster is an experimental learned query-plan ranking system for PostgreSQL. It asks PostgreSQL for a bounded set of alternative physical plans, deduplicates them structurally, predicts candidate runtime from planner-visible plan features, applies uncertainty-aware fallback, and executes the selected candidate back inside PostgreSQL.
+Aster is an experimental learned query-plan ranking system for PostgreSQL. It asks PostgreSQL for a bounded set of alternative physical plans, deduplicates them structurally, predicts candidate runtime from planner-visible plan features, applies calibrated uncertainty-aware fallback, and executes the selected candidate back inside PostgreSQL.
 
-> **Research status:** the end-to-end foundation is implemented, but Aster does **not** yet have a large benchmark corpus or a defensible speedup claim. The target numbers in the project brief are goals, not results.
+> **Research status:** the end-to-end research infrastructure is implemented, but Aster does **not** yet have a published large benchmark corpus or a defensible speedup claim. Target numbers from the project brief are goals, not results.
 
 ## Research question
 
@@ -13,11 +13,11 @@ Can a learned model rank alternative PostgreSQL execution plans well enough to o
 ```mermaid
 flowchart LR
     Q[SQL query] --> PG[PostgreSQL planner]
-    PG --> C[Bounded planner-GUC candidates]
+    PG --> C[Bounded physical + GEQO candidates]
     C --> D[Structural canonicalization + dedup]
     D --> F[Leak-free plan features]
     F --> M[Learned runtime ensemble]
-    M --> U[Uncertainty / domain / gain gate]
+    M --> U[Conformal uncertainty + domain + gain gate]
     U -->|confident| A[Aster candidate]
     U -->|fallback| N[Native candidate]
     A --> E[EXPLAIN ANALYZE under selected GUCs]
@@ -31,13 +31,23 @@ Aster currently integrates through **session-local PostgreSQL planner settings**
 
 - PostgreSQL `EXPLAIN (FORMAT JSON)` tree parser and structural fingerprints.
 - Explicit graph representation (nodes + parent/child edges).
-- Bounded planner-GUC candidate generation with deduplication before execution.
-- Repeated `EXPLAIN ANALYZE (BUFFERS, TIMING OFF)` collection with provenance.
-- Leak-free baseline features and a random-forest runtime ensemble.
-- Ensemble disagreement, training-domain, and minimum-gain fallback gates.
-- Query-template holdout with zero template overlap.
-- Evaluation using measured selected-plan runtime vs native runtime.
-- CLI: `collect`, `train`, `optimize`.
+- Strictly validated planner-setting candidate generation, including deterministic GEQO join-search variants.
+- Structural deduplication before measured execution plus candidate-yield auditing.
+- Repeated `EXPLAIN ANALYZE (BUFFERS, TIMING OFF)` collection with provenance and plan-drift detection.
+- Atomic, resumable per-query collection and integrity-gated finalization.
+- External Join Order Benchmark support: 113-query/33-family workload fingerprint plus exact 21-table IMDB snapshot identity.
+- External TPC-H support: 22-query workload fingerprint, eight-table snapshot identity, scale/specification provenance, collection, and finalization.
+- Audited multi-workload corpus merging for workload-shift experiments.
+- Leak-free plan-summary features and a random-forest runtime ensemble.
+- PostgreSQL-cost, absolute-runtime Ridge, query-normalized Ridge, and pairwise logistic ranking baselines.
+- Split-conformal runtime intervals fitted only from a training-side query holdout.
+- Fallback gates for unseen structure, feature-domain shift, ensemble disagreement, and conservative calibrated gain.
+- Template, parameter, and whole-workload holdout regimes.
+- Offline robustness matrix over measured candidate runtimes with unsupported regimes reported explicitly.
+- Randomized paired live benchmarking with raw samples and Aster selection overhead charged.
+- Full-JOB benchmark aggregation: no-fallback vs uncertainty-fallback, full distributions, tail regressions, and fallback frequency.
+- Benchmark identity bound to exact model bytes, workload/data bytes, host fingerprint, PostgreSQL catalog/settings state, and candidate set.
+- CLI: `collect`, `train`, `optimize`, `benchmark`, plus workload/preflight/finalization scripts.
 - PostgreSQL 17 Docker environment and live GitHub Actions smoke test.
 
 ## Quick start
@@ -57,30 +67,35 @@ aster collect --sql-file demo/query.sql --workload demo --query-id demo-west-1 -
 
 The single demo query is a functional fixture, not a training benchmark.
 
+For the standardized JOB/TPC-H collection, cross-workload merge, robustness, calibration, and paired-benchmark workflow, see `docs/REPRODUCIBILITY.md`.
+
 ## Current model
 
-The first model is deliberately simple: a random-forest ensemble over plan-summary features such as operator counts, estimated cardinalities, widths, depth, and estimated costs. Runtime-only fields are excluded from inference features. Aster already constructs plan graphs, but the graph neural model is **not implemented yet** and must beat simpler baselines before becoming primary.
+The primary executable model is deliberately simple: a random-forest ensemble over plan-summary features such as operator counts, estimated cardinalities, widths, depth, and estimated costs. Runtime-only fields are excluded from inference features. Aster constructs plan graphs, but a graph neural model is **not implemented yet**: structural model complexity must beat the simpler measured baselines before becoming primary.
 
 ## Benchmark status
 
 | Result | Status |
 |---|---|
-| Unique measured plans | not yet reported |
-| Held-out workload | not yet established |
-| Geometric-mean speedup vs PostgreSQL | **not yet measured** |
-| p95 end-to-end latency change | **not yet measured** |
-| Median ranking overhead | **not yet measured** |
-| Severe-regression rate with fallback | **not yet measured** |
+| Unique measured research plans | not yet published |
+| JOB end-to-end benchmark | infrastructure ready; no published corpus/result |
+| TPC-H workload-shift benchmark | infrastructure ready; no published corpus/result |
+| Geometric-mean speedup vs PostgreSQL | **not yet measured for publication** |
+| p95 end-to-end latency change | **not yet measured for publication** |
+| Median ranking/selection overhead | **not yet measured for publication** |
+| Severe-regression rate with fallback | **not yet measured for publication** |
+| Calibrated interval test coverage | protocol implemented; no published corpus result |
 
 No number will be added until traceable to reproducible experiment artifacts. See `docs/BENCHMARKS.md`.
 
 ## Important limitations
 
-- Candidate search is currently limited to planner GUC combinations; it does not enumerate arbitrary join orders.
+- Candidate search is bounded; GEQO seeds expand join-order diversity but Aster still does not enumerate the full physical-plan space.
 - There is no `pg_hint_plan` adapter or PostgreSQL planner-hook extension yet.
 - The demo schema is synthetic and **cannot support resume performance claims**.
-- The learned model is a flat-feature baseline, not the final graph model.
-- Fallback calibration has not yet produced a gain/risk Pareto curve.
+- The learned production model is still a flat-feature baseline; plan-graph models must earn their complexity empirically.
+- Conformal intervals and fallback policies are implemented, but no calibrated gain/risk curve is a published result until measured on finalized held-out corpora.
+- TPC-H query text/data and JOB/IMDB inputs remain external; Aster fingerprints them instead of redistributing benchmark material.
 - `EXPLAIN ANALYZE` executes the query; use disposable benchmark databases.
 
 The living plan is `docs/IMPLEMENTATION_PLAN.md`.
