@@ -17,7 +17,14 @@ from aster.candidates import CandidateCollector, default_candidates
 from aster.data import audit_dataset
 from aster.data.jsonl import append_observations
 from aster.data.load import load_training_examples
-from aster.experiments import evaluate_fallback_policy, evaluate_ranking, fallback_pareto_sweep, template_holdout
+from aster.experiments import (
+    evaluate_fallback_policy,
+    evaluate_ranking,
+    fallback_pareto_sweep,
+    parameter_holdout,
+    template_holdout,
+    workload_holdout,
+)
 from aster.integration.psql import PsqlExplainRunner, read_query
 from aster.models import (
     PairwiseLogisticRanker,
@@ -48,15 +55,28 @@ def cmd_collect(args):
             query_id=args.query_id, dataset_version=args.dataset_version, run_seed=args.seed,
             code_revision=args.code_revision or _revision(), experiment_id=experiment_id,
             query_template=args.query_template, parameter_key=args.parameter_key,
-            warmups=args.warmups, repetitions=args.repetitions))
+            warmups=args.warmups,repetitions=args.repetitions))
     print(json.dumps({"experiment_id":experiment_id,"query_id":args.query_id,"candidate_specs":len(default_candidates()),
                       "unique_plans":len(discovered),"observations_written":total,"out":str(args.out)}, sort_keys=True)); return 0
+
+
+def _training_split(examples, args):
+    splitters={
+        "template": template_holdout,
+        "parameter": parameter_holdout,
+        "workload": workload_holdout,
+    }
+    return splitters[args.split_regime](
+        examples,
+        test_fraction=args.test_fraction,
+        seed=args.seed,
+    )
 
 
 def cmd_train(args):
     integrity = audit_dataset(args.dataset)
     if not integrity.ok: raise SystemExit("dataset integrity audit failed:\n- " + "\n- ".join(integrity.errors))
-    examples = load_training_examples(args.dataset); split = template_holdout(examples,test_fraction=args.test_fraction,seed=args.seed)
+    examples = load_training_examples(args.dataset); split = _training_split(examples,args)
     train,test=list(split.train),list(split.test)
     postgres_cost=PostgresCostRanker()
     ridge=RidgeRuntimeModel(alpha=args.ridge_alpha).fit(train)
@@ -64,7 +84,9 @@ def cmd_train(args):
     pairwise=PairwiseLogisticRanker(c=args.pairwise_c,seed=args.seed).fit(train)
     model=RuntimeEnsemble(trees=args.trees,seed=args.seed,min_samples_leaf=args.min_samples_leaf).fit(train)
     metadata={"model":"random_forest_runtime_baseline","seed":args.seed,"dataset":str(args.dataset),"dataset_integrity":asdict(integrity),
-              "train_examples":len(train),"test_examples":len(test),"train_templates":sorted(split.train_groups),"test_templates":sorted(split.test_groups),
+              "split_regime":args.split_regime,"test_fraction":args.test_fraction,
+              "train_examples":len(train),"test_examples":len(test),
+              "train_groups":sorted(split.train_groups),"test_groups":sorted(split.test_groups),
               "objective_metadata":{"pairwise_training_pairs":pairwise.training_pairs},
               "baseline_metrics":{"postgres_estimated_cost":asdict(evaluate_ranking(postgres_cost,test)),
                                   "ridge_log_runtime":asdict(evaluate_ranking(ridge,test)),
@@ -152,7 +174,8 @@ def build_parser():
         p.add_argument("--max-outside-features",type=int,default=4)
     collect=sub.add_parser("collect"); db_args(collect); collect.add_argument("--out",type=Path,required=True); collect.add_argument("--code-revision"); collect.set_defaults(func=cmd_collect)
     train=sub.add_parser("train"); train.add_argument("--dataset",type=Path,required=True); train.add_argument("--model-out",type=Path,required=True)
-    train.add_argument("--test-fraction",type=float,default=.2); train.add_argument("--seed",type=int,default=7); train.add_argument("--trees",type=int,default=128)
+    train.add_argument("--test-fraction",type=float,default=.2); train.add_argument("--split-regime",choices=("template","parameter","workload"),default="template")
+    train.add_argument("--seed",type=int,default=7); train.add_argument("--trees",type=int,default=128)
     train.add_argument("--min-samples-leaf",type=int,default=2); train.add_argument("--ridge-alpha",type=float,default=1.0); train.add_argument("--pairwise-c",type=float,default=1.0); train.set_defaults(func=cmd_train)
     audit=sub.add_parser("audit-dataset"); audit.add_argument("--dataset",type=Path,required=True); audit.set_defaults(func=cmd_audit_dataset)
     optimize=sub.add_parser("optimize"); db_args(optimize); optimize.add_argument("--model",type=Path,required=True); risk_args(optimize); optimize.set_defaults(func=cmd_optimize)
