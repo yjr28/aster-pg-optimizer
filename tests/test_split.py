@@ -1,19 +1,20 @@
 import pytest
 
-from aster.experiments import parameter_holdout, template_holdout, workload_holdout
+from aster.experiments import parameter_holdout, query_holdout, template_holdout, workload_holdout
 from aster.models import TrainingExample
 from aster.plans import parse_explain_json
 
 
-def example(query_id, template, *, parameter=None, workload=None):
+def example(query_id, template, *, parameter=None, workload=None, candidate="native", dataset="v1"):
     return TrainingExample(
         parse_explain_json({"Plan": {"Node Type": "Seq Scan"}}),
         1.0,
         query_id,
-        "native",
+        candidate,
         template,
         parameter,
         workload,
+        dataset,
     )
 
 
@@ -34,10 +35,9 @@ def test_parameter_holdout_keeps_each_template_in_train_and_holds_complete_param
     for template in ("t1","t2"):
         for parameter in ("a","b","c"):
             for candidate in ("native","alt"):
-                item=example(f"{template}-{parameter}",template,parameter=parameter,workload="job")
-                examples.append(TrainingExample(
-                    item.plan,item.runtime_ms,item.query_id,candidate,item.query_template,
-                    item.parameter_key,item.workload,item.dataset_version,
+                examples.append(example(
+                    f"{template}-{parameter}",template,parameter=parameter,
+                    workload="job",candidate=candidate,
                 ))
     split=parameter_holdout(examples,test_fraction=1/3,seed=3)
     assert {e.query_template for e in split.train} == {"t1","t2"}
@@ -66,3 +66,19 @@ def test_workload_holdout_has_zero_workload_leakage():
     assert split.train_groups.isdisjoint(split.test_groups)
     assert {e.workload for e in split.train} == split.train_groups
     assert {e.workload for e in split.test} == split.test_groups
+
+
+def test_query_holdout_keeps_all_candidates_for_query_together():
+    examples=[]
+    for query_id in ("q1","q2","q3","q4"):
+        examples.extend([
+            example(query_id,"t",parameter=query_id,workload="job",candidate="native"),
+            example(query_id,"t",parameter=query_id,workload="job",candidate="alt"),
+        ])
+    split=query_holdout(examples,test_fraction=0.25,seed=2)
+    train_queries={e.query_id for e in split.train}
+    test_queries={e.query_id for e in split.test}
+    assert train_queries.isdisjoint(test_queries)
+    assert len(test_queries)==1
+    for query_id in test_queries:
+        assert {e.candidate_id for e in split.test if e.query_id==query_id} == {"native","alt"}
