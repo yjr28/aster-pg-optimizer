@@ -9,11 +9,14 @@ from aster.data.load import load_training_examples
 from aster.experiments import TrainingProtocol, run_robustness_matrix
 
 
+REGIMES = ("template", "parameter", "workload", "dataset", "relation")
+
+
 def main(argv=None) -> int:
     parser=argparse.ArgumentParser(description="Evaluate Aster across leakage-resistant dataset splits")
     parser.add_argument("--dataset",type=Path,required=True)
     parser.add_argument("--out",type=Path)
-    parser.add_argument("--regime",action="append",choices=("template","parameter","workload"))
+    parser.add_argument("--regime",action="append",choices=REGIMES)
     parser.add_argument("--test-fraction",type=float,default=.2)
     parser.add_argument("--calibration-fraction",type=float,default=.15)
     parser.add_argument("--conformal-alpha",type=float,default=.10)
@@ -40,7 +43,7 @@ def main(argv=None) -> int:
         ridge_alpha=args.ridge_alpha,
         pairwise_c=args.pairwise_c,
     )
-    regimes=tuple(args.regime) if args.regime else ("template","parameter","workload")
+    regimes=tuple(args.regime) if args.regime else REGIMES
     matrix=run_robustness_matrix(load_training_examples(args.dataset),protocol,regimes=regimes)
     payload={
         "dataset":str(args.dataset),
