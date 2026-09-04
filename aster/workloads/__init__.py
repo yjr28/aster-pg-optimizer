@@ -1,3 +1,4 @@
+from .collect import JobCollectionConfig, JobCollectionSummary, collect_job_workload
 from .imdb import (
     EXPECTED_IMDB_TABLES,
     DatasetFile,
@@ -15,6 +16,9 @@ from .job import (
 from .preflight import JobPreflightManifest, build_job_preflight
 
 __all__ = [
+    "JobCollectionConfig",
+    "JobCollectionSummary",
+    "collect_job_workload",
     "EXPECTED_IMDB_TABLES",
     "DatasetFile",
     "ImdbDatasetManifest",
