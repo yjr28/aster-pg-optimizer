@@ -1,5 +1,10 @@
 from .collect import JobCollectionConfig, JobCollectionSummary, collect_job_workload
-from .finalize import FinalizedJobDataset, finalize_job_collection
+from .finalize import (
+    FinalizedJobDataset,
+    FinalizedTpchDataset,
+    finalize_job_collection,
+    finalize_tpch_collection,
+)
 from .imdb import (
     EXPECTED_IMDB_TABLES,
     DatasetFile,
@@ -38,7 +43,9 @@ __all__ = [
     "JobCollectionSummary",
     "collect_job_workload",
     "FinalizedJobDataset",
+    "FinalizedTpchDataset",
     "finalize_job_collection",
+    "finalize_tpch_collection",
     "EXPECTED_IMDB_TABLES",
     "DatasetFile",
     "ImdbDatasetManifest",
