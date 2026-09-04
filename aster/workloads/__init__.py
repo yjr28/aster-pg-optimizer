@@ -14,7 +14,12 @@ from .job import (
     build_job_manifest,
     load_job_queries,
 )
-from .preflight import JobPreflightManifest, build_job_preflight
+from .preflight import (
+    JobPreflightManifest,
+    TpchPreflightManifest,
+    build_job_preflight,
+    build_tpch_preflight,
+)
 from .tpch import (
     EXPECTED_TPCH_QUERY_COUNT,
     EXPECTED_TPCH_TABLES,
@@ -44,7 +49,9 @@ __all__ = [
     "build_job_manifest",
     "load_job_queries",
     "JobPreflightManifest",
+    "TpchPreflightManifest",
     "build_job_preflight",
+    "build_tpch_preflight",
     "EXPECTED_TPCH_QUERY_COUNT",
     "EXPECTED_TPCH_TABLES",
     "TpchDatasetFile",
