@@ -26,15 +26,27 @@ def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
 
 
 def load_training_examples(path: str | Path) -> list[TrainingExample]:
-    """Aggregate repeated observations to one median-runtime physical-plan example."""
-    groups: dict[tuple[str, str, str, str, str], list[dict[str, Any]]] = defaultdict(list)
+    """Aggregate repeated observations to one median-runtime physical-plan example.
+
+    Environment identity is part of the aggregation key. The same physical plan measured
+    under two PostgreSQL/index/statistics/hardware snapshots must never be averaged into
+    one label.
+    """
+    groups: dict[tuple[str, str, str, str, str, str], list[dict[str, Any]]] = defaultdict(list)
     for record in read_jsonl(path):
         provenance = record["provenance"]
-        key = (provenance["dataset_version"], provenance["workload"], provenance["query_id"],
-               provenance["candidate_id"], record["plan_fingerprint"])
+        environment_sha256 = str(provenance.get("environment_sha256") or "")
+        key = (
+            provenance["dataset_version"],
+            provenance["workload"],
+            provenance["query_id"],
+            provenance["candidate_id"],
+            record["plan_fingerprint"],
+            environment_sha256,
+        )
         groups[key].append(record)
     examples: list[TrainingExample] = []
-    for (dataset_version, workload, query_id, candidate_id, _), rows in groups.items():
+    for (dataset_version, workload, query_id, candidate_id, _, environment_sha256), rows in groups.items():
         runtimes = [float(row["execution_time_ms"]) for row in rows]
         provenance = rows[0]["provenance"]
         examples.append(TrainingExample(
@@ -42,5 +54,6 @@ def load_training_examples(path: str | Path) -> list[TrainingExample]:
             query_id=query_id, candidate_id=candidate_id,
             query_template=provenance.get("query_template"), parameter_key=provenance.get("parameter_key"),
             workload=workload, dataset_version=dataset_version,
+            environment_sha256=environment_sha256 or None,
         ))
     return examples
