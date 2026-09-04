@@ -21,7 +21,10 @@ def _test_count(group_count: int, test_fraction: float) -> int:
 
 
 def _query_key(example: TrainingExample) -> str:
-    return f"{example.dataset_version or ''}::{example.workload or ''}::{example.query_id}"
+    return (
+        f"{example.environment_sha256 or ''}::{example.dataset_version or ''}::"
+        f"{example.workload or ''}::{example.query_id}"
+    )
 
 
 def template_holdout(examples: list[TrainingExample], *, test_fraction: float = 0.2, seed: int = 7) -> HoldoutSplit:
@@ -95,6 +98,30 @@ def dataset_version_holdout(examples: list[TrainingExample], *, test_fraction: f
     return HoldoutSplit(
         tuple(e for e in examples if str(e.dataset_version) in train_groups),
         tuple(e for e in examples if str(e.dataset_version) in test_groups),
+        train_groups, test_groups,
+    )
+
+
+def environment_holdout(examples: list[TrainingExample], *, test_fraction: float = 0.2, seed: int = 7) -> HoldoutSplit:
+    """Hold out entire benchmark database/runtime snapshots.
+
+    `environment_sha256` fingerprints PostgreSQL settings, relations/indexes/statistics
+    state and host properties captured before collection. All examples measured under
+    one fingerprint stay together, allowing clean stale-statistics/index/config/hardware
+    shift studies without averaging labels across states.
+    """
+    if not 0 < test_fraction < 1: raise ValueError("test_fraction must be between 0 and 1")
+    missing = [e.query_id for e in examples if not e.environment_sha256]
+    if missing:
+        raise ValueError(f"environment_sha256 required for environment holdout; missing for {missing[:3]}")
+    groups = sorted({str(e.environment_sha256) for e in examples if e.environment_sha256})
+    if len(groups) < 2:
+        raise ValueError("at least two benchmark environments are required for environment holdout")
+    rng = random.Random(seed); rng.shuffle(groups); count = _test_count(len(groups), test_fraction)
+    test_groups = frozenset(groups[:count]); train_groups = frozenset(groups[count:])
+    return HoldoutSplit(
+        tuple(e for e in examples if str(e.environment_sha256) in train_groups),
+        tuple(e for e in examples if str(e.environment_sha256) in test_groups),
         train_groups, test_groups,
     )
 
