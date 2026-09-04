@@ -11,6 +11,17 @@ def fallback_reason(model: RuntimeEnsemble, *, best_prediction: RuntimePredictio
     if best_prediction.outside_training_range_count > max_outside_features: return "too_many_out_of_range_features"
     if not model.in_training_cost_domain(best_prediction, margin=domain_margin): return "outside_training_cost_domain"
     if best_prediction.log_std > max_log_std: return "uncertainty_too_high"
+
+    if (
+        best_prediction.interval_upper_ms is not None
+        and native_prediction.interval_lower_ms is not None
+    ):
+        conservative_gain = 1.0 - (
+            best_prediction.interval_upper_ms / max(1e-9, native_prediction.interval_lower_ms)
+        )
+        if conservative_gain < min_predicted_gain:
+            return "calibrated_gain_too_small"
+
     gain = 1.0 - best_prediction.runtime_ms / native_prediction.runtime_ms
     if gain < min_predicted_gain: return "predicted_gain_too_small"
     return None
