@@ -1,3 +1,4 @@
+from aster.benchmarks import run_paired_benchmark
 from aster.candidates import CandidateCollector, CandidateSpec
 from aster.integration import PsqlExplainRunner
 
@@ -32,4 +33,24 @@ obs = collector.measure(
     repetitions=1,
 )
 assert obs[0].execution_time_ms > 0
-print({"unique_plans": len(discovered), "execution_ms": obs[0].execution_time_ms})
+
+native = next(candidate for candidate in discovered if candidate.spec.candidate_id == "native")
+alternative = next(candidate for candidate in discovered if candidate is not native)
+paired = run_paired_benchmark(
+    runner,
+    QUERY,
+    native,
+    alternative,
+    selection_overhead_ms=0.0,
+    warmups=0,
+    repetitions=2,
+    seed=7,
+)
+assert len(paired.samples) == 2
+assert paired.native_execution.median_ms > 0
+assert paired.aster_execution.median_ms > 0
+print({
+    "unique_plans": len(discovered),
+    "execution_ms": obs[0].execution_time_ms,
+    "paired_speedup": paired.execution_speedup_geomean,
+})
