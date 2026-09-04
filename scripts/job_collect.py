@@ -8,7 +8,7 @@ from dataclasses import asdict
 from pathlib import Path
 from uuid import uuid4
 
-from aster.candidates import CandidateCollector, default_candidates
+from aster.candidates import CandidateCollector, default_candidates, research_candidates
 from aster.integration import PsqlExplainRunner
 from aster.workloads import JobCollectionConfig, build_job_manifest, collect_job_workload
 
@@ -50,6 +50,7 @@ def main(argv=None) -> int:
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--warmups", type=int, default=1)
     parser.add_argument("--repetitions", type=int, default=3)
+    parser.add_argument("--candidate-set", choices=("fast", "research"), default="research")
     parser.add_argument("--no-resume", action="store_true")
     parser.add_argument("--fail-fast", action="store_true")
     parser.add_argument("--allow-partial-workload", action="store_true")
@@ -81,12 +82,13 @@ def main(argv=None) -> int:
     )
     runner = PsqlExplainRunner(dsn, timeout_s=args.timeout)
     collector = CandidateCollector(runner)
+    candidate_specs = research_candidates() if args.candidate_set == "research" else default_candidates()
     summary = collect_job_workload(
         collector,
         args.query_dir,
         args.output_dir,
         config=config,
-        candidates=default_candidates(),
+        candidates=candidate_specs,
         strict_workload=strict,
         resume=not args.no_resume,
         fail_fast=args.fail_fast,
@@ -95,6 +97,8 @@ def main(argv=None) -> int:
         "experiment_id": experiment_id,
         "dataset_version": config.dataset_version,
         "benchmark_input_sha256": config.benchmark_input_sha256,
+        "candidate_set": args.candidate_set,
+        "candidate_specs": len(candidate_specs),
         "summary": asdict(summary),
     }
     print(json.dumps(result, indent=2, sort_keys=True))
