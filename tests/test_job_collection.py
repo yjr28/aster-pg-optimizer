@@ -18,12 +18,13 @@ class FakeCandidate:
 
 
 class FakeObservation:
-    def __init__(self, experiment_id, query_id, candidate_id, repetition):
+    def __init__(self, experiment_id, query_id, candidate_id, repetition, environment_sha256=None):
         self.row = {
             "provenance": {
                 "experiment_id": experiment_id,
                 "query_id": query_id,
                 "candidate_id": candidate_id,
+                "environment_sha256": environment_sha256,
             },
             "repetition": repetition,
         }
@@ -42,11 +43,15 @@ class FakeCollector:
         return (FakeCandidate(FakeSpec("native")), FakeCandidate(FakeSpec("alt")))
     def measure(self, query, candidate, **kwargs):
         return tuple(FakeObservation(
-            kwargs["experiment_id"], kwargs["query_id"], candidate.spec.candidate_id, repetition
+            kwargs["experiment_id"],
+            kwargs["query_id"],
+            candidate.spec.candidate_id,
+            repetition,
+            kwargs.get("environment_sha256"),
         ) for repetition in range(kwargs["repetitions"]))
 
 
-def _config():
+def _config(*, environment=None):
     return JobCollectionConfig(
         experiment_id="exp-1",
         dataset_version="job-imdb-sha256:abc",
@@ -54,6 +59,7 @@ def _config():
         workload_sha256="b" * 64,
         run_seed=7,
         code_revision="deadbeef",
+        environment_sha256=environment,
         warmups=0,
         repetitions=2,
     )
@@ -94,3 +100,18 @@ def test_resume_refuses_shard_from_another_experiment(tmp_path):
     shard.write_text(text)
     with pytest.raises(ValueError, match="another experiment"):
         collect_job_workload(FakeCollector(), queries, output, config=_config(), candidates=(), strict_workload=False)
+
+
+def test_resume_refuses_shard_from_another_benchmark_environment(tmp_path):
+    queries=tmp_path/"job"; queries.mkdir()
+    (queries/"1a.sql").write_text("SELECT 1;")
+    output=tmp_path/"out"
+    collect_job_workload(
+        FakeCollector(),queries,output,config=_config(environment="a"*64),
+        candidates=(),strict_workload=False,
+    )
+    with pytest.raises(ValueError,match="another benchmark environment"):
+        collect_job_workload(
+            FakeCollector(),queries,output,config=_config(environment="b"*64),
+            candidates=(),strict_workload=False,
+        )
