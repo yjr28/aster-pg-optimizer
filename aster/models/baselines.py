@@ -8,6 +8,8 @@ from typing import Protocol
 import numpy as np
 from sklearn.feature_extraction import DictVectorizer
 from sklearn.linear_model import LogisticRegression, Ridge
+from sklearn.neural_network import MLPRegressor
+from sklearn.preprocessing import StandardScaler
 
 from aster.features.baseline import baseline_feature_dict
 from aster.plans.types import PlanDocument
@@ -62,6 +64,71 @@ class RidgeRuntimeModel:
         x = self.vectorizer.transform([baseline_feature_dict(plan)])
         log_runtime = float(self.model.predict(x)[0])
         return max(1e-9, math.expm1(log_runtime))
+
+    def score(self, plan: PlanDocument) -> float:
+        return self.predict_runtime_ms(plan)
+
+
+class MLPRuntimeModel:
+    """Small deterministic neural baseline over the flat leak-free feature vector.
+
+    The MLP predicts log1p(runtime), matching the absolute-runtime Ridge/RF targets.
+    Standardization is fit only on the training subset. This is intentionally a flat
+    baseline: any future graph model must beat it under the same split protocol before
+    structural neural complexity is justified.
+    """
+
+    name = "mlp_log_runtime"
+
+    def __init__(
+        self,
+        *,
+        hidden_layer_sizes: tuple[int, ...] = (64, 32),
+        alpha: float = 1e-4,
+        seed: int = 7,
+        max_iter: int = 500,
+    ):
+        if not hidden_layer_sizes or any(width < 1 for width in hidden_layer_sizes):
+            raise ValueError("hidden_layer_sizes must contain positive widths")
+        if alpha < 0:
+            raise ValueError("alpha must be non-negative")
+        if max_iter < 1:
+            raise ValueError("max_iter must be positive")
+        self.hidden_layer_sizes = hidden_layer_sizes
+        self.alpha = alpha
+        self.seed = seed
+        self.max_iter = max_iter
+        self.vectorizer = DictVectorizer(sparse=False)
+        self.scaler = StandardScaler()
+        self.model = MLPRegressor(
+            hidden_layer_sizes=hidden_layer_sizes,
+            activation="relu",
+            solver="lbfgs",
+            alpha=alpha,
+            random_state=seed,
+            max_iter=max_iter,
+        )
+        self._fitted = False
+
+    def fit(self, examples: list[TrainingExample]) -> "MLPRuntimeModel":
+        if len(examples) < 4:
+            raise ValueError("at least 4 training examples are required")
+        if any(example.runtime_ms <= 0 for example in examples):
+            raise ValueError("runtime labels must be positive")
+        rows = [baseline_feature_dict(example.plan) for example in examples]
+        x = self.vectorizer.fit_transform(rows)
+        x = self.scaler.fit_transform(x)
+        y = np.log1p([example.runtime_ms for example in examples])
+        self.model.fit(x, y)
+        self._fitted = True
+        return self
+
+    def predict_runtime_ms(self, plan: PlanDocument) -> float:
+        if not self._fitted:
+            raise RuntimeError("model is not fitted")
+        x = self.vectorizer.transform([baseline_feature_dict(plan)])
+        x = self.scaler.transform(x)
+        return max(1e-9, math.expm1(float(self.model.predict(x)[0])))
 
     def score(self, plan: PlanDocument) -> float:
         return self.predict_runtime_ms(plan)
