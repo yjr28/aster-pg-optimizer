@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from aster.data import DatasetIntegrityReport
 from aster.workloads.finalize import finalize_job_collection
 
 
@@ -19,11 +20,20 @@ def _write_collection(root, *, failures=False, dataset_version="v1"):
 
 def test_finalize_requires_complete_failure_free_single_experiment(tmp_path, monkeypatch):
     root=tmp_path/"collection"; _write_collection(root)
-    class Audit:
-        ok=True; errors=(); sha256="c"*64; observations=2; unique_query_plans=2
-        experiments=1; queries=2; query_templates=2; min_repetitions_per_plan=1
-        max_repetitions_per_plan=1; missing_template_records=0; warnings=()
-    monkeypatch.setattr("aster.workloads.finalize.audit_dataset", lambda path: Audit())
+    audit=DatasetIntegrityReport(
+        sha256="c"*64,
+        observations=2,
+        experiments=1,
+        queries=2,
+        query_templates=2,
+        unique_query_plans=2,
+        min_repetitions_per_plan=1,
+        max_repetitions_per_plan=1,
+        missing_template_records=0,
+        errors=(),
+        warnings=(),
+    )
+    monkeypatch.setattr("aster.workloads.finalize.audit_dataset", lambda path: audit)
     result=finalize_job_collection(root,tmp_path/"dataset.jsonl")
     assert result.query_count==2
     assert result.observation_count==2
