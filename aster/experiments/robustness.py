@@ -4,8 +4,23 @@ from dataclasses import asdict, dataclass, replace
 
 from aster.models import TrainingExample
 
-from .split import parameter_holdout, template_holdout, workload_holdout
+from .split import (
+    dataset_version_holdout,
+    parameter_holdout,
+    relation_holdout,
+    template_holdout,
+    workload_holdout,
+)
 from .training import TrainingProtocol, run_training_experiment
+
+
+SUPPORTED_ROBUSTNESS_REGIMES = frozenset({
+    "template",
+    "parameter",
+    "workload",
+    "dataset",
+    "relation",
+})
 
 
 @dataclass(frozen=True)
@@ -32,13 +47,13 @@ class RobustnessMatrix:
 
 
 def _profile(examples: list[TrainingExample]) -> tuple[int, int, tuple[str, ...], tuple[str, ...]]:
-    queries={
+    queries = {
         (example.dataset_version or "", example.workload or "", example.query_id)
         for example in examples
     }
-    templates={example.query_template for example in examples if example.query_template}
-    workloads=tuple(sorted({str(example.workload) for example in examples if example.workload}))
-    versions=tuple(sorted({str(example.dataset_version) for example in examples if example.dataset_version}))
+    templates = {example.query_template for example in examples if example.query_template}
+    workloads = tuple(sorted({str(example.workload) for example in examples if example.workload}))
+    versions = tuple(sorted({str(example.dataset_version) for example in examples if example.dataset_version}))
     return len(queries), len(templates), workloads, versions
 
 
@@ -47,10 +62,12 @@ def _validate_regime_split(
     protocol: TrainingProtocol,
     regime: str,
 ) -> None:
-    splitters={
-        "template":template_holdout,
-        "parameter":parameter_holdout,
-        "workload":workload_holdout,
+    splitters = {
+        "template": template_holdout,
+        "parameter": parameter_holdout,
+        "workload": workload_holdout,
+        "dataset": dataset_version_holdout,
+        "relation": relation_holdout,
     }
     splitters[regime](
         examples,
@@ -63,7 +80,7 @@ def run_robustness_matrix(
     examples: list[TrainingExample],
     protocol: TrainingProtocol,
     *,
-    regimes: tuple[str, ...] = ("template", "parameter", "workload"),
+    regimes: tuple[str, ...] = ("template", "parameter", "workload", "dataset", "relation"),
 ) -> RobustnessMatrix:
     """Evaluate leakage-resistant split regimes on already measured plan runtimes.
 
@@ -77,15 +94,15 @@ def run_robustness_matrix(
     """
     if not examples:
         raise ValueError("dataset is empty")
-    unknown=set(regimes)-{"template","parameter","workload"}
+    unknown = set(regimes) - SUPPORTED_ROBUSTNESS_REGIMES
     if unknown:
         raise ValueError(f"unsupported robustness regimes: {sorted(unknown)}")
 
-    results: list[RobustnessRegimeResult]=[]
+    results: list[RobustnessRegimeResult] = []
     for regime in regimes:
-        regime_protocol=replace(protocol,split_regime=regime)
+        regime_protocol = replace(protocol, split_regime=regime)
         try:
-            _validate_regime_split(examples,regime_protocol,regime)
+            _validate_regime_split(examples, regime_protocol, regime)
         except ValueError as exc:
             results.append(RobustnessRegimeResult(
                 regime=regime,
@@ -95,7 +112,7 @@ def run_robustness_matrix(
             ))
             continue
 
-        _model, experiment=run_training_experiment(examples,regime_protocol)
+        _model, experiment = run_training_experiment(examples, regime_protocol)
         results.append(RobustnessRegimeResult(
             regime=regime,
             status="ok",
@@ -103,7 +120,7 @@ def run_robustness_matrix(
             metrics=experiment.to_jsonable(),
         ))
 
-    query_groups, templates, workloads, versions=_profile(examples)
+    query_groups, templates, workloads, versions = _profile(examples)
     return RobustnessMatrix(
         evaluation_kind="offline_measured_plan_replay",
         observations=len(examples),
