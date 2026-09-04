@@ -32,3 +32,32 @@ def test_loader_keeps_same_query_id_separate_across_dataset_versions(tmp_path):
     path.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
     examples = load_training_examples(path)
     assert len(examples) == 2 and {e.dataset_version for e in examples} == {"v1", "v2"}
+
+
+def test_loader_keeps_identical_query_plan_separate_across_environments(tmp_path):
+    from aster.plans import parse_explain_json, plan_fingerprint
+    path=tmp_path/"environment-shift.jsonl"
+    plan={"Plan":{"Node Type":"Seq Scan","Relation Name":"orders","Total Cost":10}}
+    fingerprint=plan_fingerprint(parse_explain_json(plan))
+    rows=[]
+    for environment,runtime in [("a"*64,5.0),("b"*64,50.0)]:
+        rows.append({
+            "provenance":{
+                "experiment_id":f"exp-{environment[0]}",
+                "workload":"w",
+                "query_id":"q1",
+                "candidate_id":"native",
+                "query_template":"t1",
+                "parameter_key":"p1",
+                "dataset_version":"v1",
+                "environment_sha256":environment,
+            },
+            "plan_fingerprint":fingerprint,
+            "execution_time_ms":runtime,
+            "plan_json":plan,
+        })
+    path.write_text("\n".join(json.dumps(row) for row in rows)+"\n")
+    examples=load_training_examples(path)
+    assert len(examples)==2
+    assert {example.environment_sha256 for example in examples} == {"a"*64,"b"*64}
+    assert sorted(example.runtime_ms for example in examples) == [5.0,50.0]
