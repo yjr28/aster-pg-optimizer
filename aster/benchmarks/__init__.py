@@ -4,6 +4,11 @@ from .environment import (
     capture_benchmark_environment,
     capture_host_environment,
 )
+from .environment_diff import (
+    BenchmarkEnvironmentDiff,
+    KeyedRowsDiff,
+    compare_benchmark_environments,
+)
 from .job import JobBenchmarkConfig, benchmark_job_workload, native_control_from_paired
 from .paired import (
     DistributionSummary,
@@ -20,9 +25,12 @@ from .workload import (
 
 __all__ = [
     "BenchmarkEnvironment",
+    "BenchmarkEnvironmentDiff",
     "HostEnvironment",
+    "KeyedRowsDiff",
     "capture_benchmark_environment",
     "capture_host_environment",
+    "compare_benchmark_environments",
     "DistributionSummary",
     "PairedBenchmarkResult",
     "PairedExecutionSample",
