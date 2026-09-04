@@ -9,7 +9,7 @@ from aster.data.load import load_training_examples
 from aster.experiments import TrainingProtocol, run_robustness_matrix
 
 
-REGIMES = ("template", "parameter", "workload", "dataset", "relation")
+REGIMES = ("template", "parameter", "workload", "dataset", "relation", "environment")
 
 
 def main(argv=None) -> int:
