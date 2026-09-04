@@ -15,6 +15,10 @@ class WorkloadCollector(Protocol):
     def measure(self, query: str, candidate, **kwargs): ...
 
 
+def _is_sha256(value: str) -> bool:
+    return len(value) == 64 and all(char in "0123456789abcdef" for char in value.lower())
+
+
 @dataclass(frozen=True)
 class TpchCollectionConfig:
     experiment_id: str
@@ -34,13 +38,13 @@ class TpchCollectionConfig:
             raise ValueError("experiment_id is required")
         if not self.dataset_version:
             raise ValueError("dataset_version is required")
-        if len(self.benchmark_input_sha256) != 64 or len(self.workload_sha256) != 64:
+        if not _is_sha256(self.benchmark_input_sha256) or not _is_sha256(self.workload_sha256):
             raise ValueError("benchmark/workload identities must be SHA-256 hex strings")
         if not self.specification_version:
             raise ValueError("specification_version is required")
         if self.scale_factor is not None and self.scale_factor <= 0:
             raise ValueError("scale_factor must be positive")
-        if self.environment_sha256 is not None and len(self.environment_sha256) != 64:
+        if self.environment_sha256 is not None and not _is_sha256(self.environment_sha256):
             raise ValueError("environment_sha256 must be a SHA-256 hex string when provided")
         if self.warmups < 0 or self.repetitions < 1:
             raise ValueError("warmups must be >=0 and repetitions >=1")
