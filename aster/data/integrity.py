@@ -44,20 +44,33 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _valid_sha256(value: object) -> bool:
+    if not isinstance(value, str) or len(value) != 64:
+        return False
+    return all(char in "0123456789abcdef" for char in value.lower())
+
+
 def audit_dataset(path: str | Path) -> DatasetIntegrityReport:
-    """Audit raw JSONL observations before model training."""
+    """Audit raw JSONL observations before model training.
+
+    Environment identity is optional for legacy corpora, but when present it is
+    validated and participates in query/plan/repetition identity. This prevents the
+    same query and physical plan measured under different PostgreSQL/index/statistics
+    states from being collapsed into one logical sample.
+    """
     path = Path(path)
     records = read_jsonl(path)
     errors: list[str] = []
     warnings: list[str] = []
     missing_templates = 0
+    missing_environments = 0
     experiments: set[str] = set()
-    queries: set[tuple[str, str, str]] = set()
+    queries: set[tuple[str, str, str, str]] = set()
     templates: set[str] = set()
-    query_plans: set[tuple[str, str, str, str]] = set()
-    repetition_keys: set[tuple[str, str, str, str, str, int]] = set()
-    repetition_groups: dict[tuple[str, str, str, str, str], set[int]] = defaultdict(set)
-    drift_groups: dict[tuple[str, str, str, str, str], set[str]] = defaultdict(set)
+    query_plans: set[tuple[str, str, str, str, str]] = set()
+    repetition_keys: set[tuple[str, str, str, str, str, str, int]] = set()
+    repetition_groups: dict[tuple[str, str, str, str, str, str], set[int]] = defaultdict(set)
+    drift_groups: dict[tuple[str, str, str, str, str, str], set[str]] = defaultdict(set)
 
     for index, record in enumerate(records, start=1):
         provenance = record.get("provenance")
@@ -74,8 +87,18 @@ def audit_dataset(path: str | Path) -> DatasetIntegrityReport:
         query_id = str(provenance["query_id"])
         candidate_id = str(provenance["candidate_id"])
         template = provenance.get("query_template")
+        raw_environment = provenance.get("environment_sha256")
+        if raw_environment in (None, ""):
+            environment_sha256 = ""
+            missing_environments += 1
+        elif not _valid_sha256(raw_environment):
+            environment_sha256 = str(raw_environment)
+            errors.append(f"record {index}: environment_sha256 must be a SHA-256 hex string")
+        else:
+            environment_sha256 = str(raw_environment).lower()
+
         experiments.add(experiment_id)
-        queries.add((dataset_version, workload, query_id))
+        queries.add((environment_sha256, dataset_version, workload, query_id))
         if template:
             templates.add(str(template))
         else:
@@ -100,25 +123,47 @@ def audit_dataset(path: str | Path) -> DatasetIntegrityReport:
         if actual_fp != stored_fp:
             errors.append(f"record {index}: stored fingerprint {stored_fp[:12]} does not match plan {actual_fp[:12]}")
 
-        query_plans.add((dataset_version, workload, query_id, stored_fp))
-        rep_key = (experiment_id, workload, query_id, candidate_id, stored_fp, repetition)
+        query_plans.add((environment_sha256, dataset_version, workload, query_id, stored_fp))
+        rep_key = (
+            experiment_id, environment_sha256, workload, query_id,
+            candidate_id, stored_fp, repetition,
+        )
         if rep_key in repetition_keys:
             errors.append(f"record {index}: duplicate repetition for experiment={experiment_id} query={query_id} candidate={candidate_id} repetition={repetition}")
         repetition_keys.add(rep_key)
-        group_key = (experiment_id, workload, query_id, candidate_id, stored_fp)
+        group_key = (
+            experiment_id, environment_sha256, workload, query_id,
+            candidate_id, stored_fp,
+        )
         repetition_groups[group_key].add(repetition)
-        drift_key = (experiment_id, dataset_version, workload, query_id, candidate_id)
+        drift_key = (
+            experiment_id, environment_sha256, dataset_version,
+            workload, query_id, candidate_id,
+        )
         drift_groups[drift_key].add(stored_fp)
 
     for group, repetitions in repetition_groups.items():
         expected = set(range(max(repetitions, default=-1) + 1))
         if repetitions != expected:
-            errors.append(f"non-contiguous repetitions for experiment={group[0]} query={group[2]} candidate={group[3]}: observed={sorted(repetitions)} expected={sorted(expected)}")
+            errors.append(
+                "non-contiguous repetitions for "
+                f"experiment={group[0]} query={group[3]} candidate={group[4]}: "
+                f"observed={sorted(repetitions)} expected={sorted(expected)}"
+            )
     for group, fingerprints in drift_groups.items():
         if len(fingerprints) > 1:
-            errors.append(f"candidate plan drift within one experiment: experiment={group[0]} query={group[3]} candidate={group[4]} fingerprints={sorted(fp[:12] for fp in fingerprints)}")
+            errors.append(
+                "candidate plan drift within one experiment: "
+                f"experiment={group[0]} query={group[4]} candidate={group[5]} "
+                f"fingerprints={sorted(fp[:12] for fp in fingerprints)}"
+            )
     if missing_templates:
         warnings.append(f"{missing_templates} observation(s) have no query_template; template-holdout training cannot use those records")
+    if missing_environments:
+        warnings.append(
+            f"{missing_environments} observation(s) have no environment_sha256; "
+            "environment-holdout evaluation cannot use those records"
+        )
     if records and not templates:
         warnings.append("dataset has no query templates")
     repetition_counts = [len(values) for values in repetition_groups.values()]
