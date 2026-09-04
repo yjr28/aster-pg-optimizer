@@ -15,6 +15,7 @@ from aster.models import (
 from .evaluate import evaluate_fallback_policy, evaluate_ranking, fallback_pareto_sweep
 from .split import (
     dataset_version_holdout,
+    environment_holdout,
     parameter_holdout,
     query_holdout,
     relation_holdout,
@@ -29,6 +30,7 @@ SUPPORTED_SPLIT_REGIMES = frozenset({
     "workload",
     "dataset",
     "relation",
+    "environment",
 })
 
 
@@ -96,6 +98,7 @@ def _primary_split(examples: list[TrainingExample], protocol: TrainingProtocol):
         "workload": workload_holdout,
         "dataset": dataset_version_holdout,
         "relation": relation_holdout,
+        "environment": environment_holdout,
     }
     return splitters[protocol.split_regime](
         examples,
