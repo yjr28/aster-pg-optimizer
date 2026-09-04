@@ -18,13 +18,14 @@ class FakeCandidate:
 
 
 class FakeObservation:
-    def __init__(self, experiment_id, query_id, candidate_id, repetition, workload):
+    def __init__(self, experiment_id, query_id, candidate_id, repetition, workload, environment_sha256=None):
         self.row = {
             "provenance": {
                 "experiment_id": experiment_id,
                 "query_id": query_id,
                 "candidate_id": candidate_id,
                 "workload": workload,
+                "environment_sha256": environment_sha256,
             },
             "repetition": repetition,
         }
@@ -48,13 +49,13 @@ class FakeCollector:
         return tuple(
             FakeObservation(
                 kwargs["experiment_id"], kwargs["query_id"], candidate.spec.candidate_id,
-                repetition, kwargs["workload"],
+                repetition, kwargs["workload"], kwargs.get("environment_sha256"),
             )
             for repetition in range(kwargs["repetitions"])
         )
 
 
-def _config():
+def _config(*, environment=None):
     return TpchCollectionConfig(
         experiment_id="exp-tpch",
         dataset_version="tpch-sf1-sha256:abc",
@@ -64,6 +65,7 @@ def _config():
         scale_factor=1.0,
         run_seed=7,
         code_revision="deadbeef",
+        environment_sha256=environment,
         warmups=0,
         repetitions=2,
     )
@@ -99,3 +101,18 @@ def test_tpch_resume_refuses_other_experiment(tmp_path):
     shard.write_text(shard.read_text().replace('"exp-tpch"','"other"'))
     with pytest.raises(ValueError,match="another experiment"):
         collect_tpch_workload(FakeCollector(),queries,output,config=_config(),candidates=(),strict_workload=False)
+
+
+def test_tpch_resume_refuses_other_benchmark_environment(tmp_path):
+    queries=tmp_path/"queries"; queries.mkdir()
+    (queries/"q1.sql").write_text("SELECT 1;")
+    output=tmp_path/"out"
+    collect_tpch_workload(
+        FakeCollector(),queries,output,config=_config(environment="a"*64),
+        candidates=(),strict_workload=False,
+    )
+    with pytest.raises(ValueError,match="another benchmark environment"):
+        collect_tpch_workload(
+            FakeCollector(),queries,output,config=_config(environment="b"*64),
+            candidates=(),strict_workload=False,
+        )
