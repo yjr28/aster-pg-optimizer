@@ -7,6 +7,8 @@ from aster.candidates.collect import DiscoveredCandidate
 from aster.models.ensemble import RuntimeEnsemble, RuntimePrediction
 from aster.plans import parse_explain_json
 
+from .risk import fallback_reason
+
 
 @dataclass(frozen=True)
 class RankedCandidate:
@@ -51,19 +53,17 @@ def rank_with_fallback(
     best = ranked[0]
     native_ranked = next(item for item in ranked if item.candidate is native)
 
-    fallback = False
-    reason = "learned_candidate"
-    if best.candidate is native:
-        fallback, reason = True, "native_already_best"
-    elif not model.in_training_cost_domain(best.prediction, margin=domain_margin):
-        fallback, reason = True, "outside_training_cost_domain"
-    elif best.prediction.log_std > max_log_std:
-        fallback, reason = True, "uncertainty_too_high"
-    else:
-        gain = 1.0 - (best.prediction.runtime_ms / native_ranked.prediction.runtime_ms)
-        if gain < min_predicted_gain:
-            fallback, reason = True, "predicted_gain_too_small"
-
+    reason_or_none = fallback_reason(
+        model,
+        best_prediction=best.prediction,
+        native_prediction=native_ranked.prediction,
+        best_is_native=best.candidate is native,
+        max_log_std=max_log_std,
+        min_predicted_gain=min_predicted_gain,
+        domain_margin=domain_margin,
+    )
+    fallback = reason_or_none is not None
+    reason = reason_or_none or "learned_candidate"
     selected = native if fallback else best.candidate
     elapsed_ms = (perf_counter_ns() - started) / 1_000_000
     return RankingDecision(

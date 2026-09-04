@@ -1,4 +1,22 @@
-from .evaluate import RankingMetrics, evaluate_runtime_ranking
+from .evaluate import (
+    FallbackCurvePoint,
+    FallbackMetrics,
+    RankingMetrics,
+    evaluate_fallback_policy,
+    evaluate_ranking,
+    evaluate_runtime_ranking,
+    fallback_pareto_sweep,
+)
 from .split import HoldoutSplit, template_holdout
 
-__all__ = ["HoldoutSplit", "RankingMetrics", "template_holdout", "evaluate_runtime_ranking"]
+__all__ = [
+    "FallbackCurvePoint",
+    "FallbackMetrics",
+    "HoldoutSplit",
+    "RankingMetrics",
+    "evaluate_fallback_policy",
+    "evaluate_ranking",
+    "evaluate_runtime_ranking",
+    "fallback_pareto_sweep",
+    "template_holdout",
+]

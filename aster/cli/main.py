@@ -13,9 +13,14 @@ from aster.artifacts import load_model, save_model
 from aster.candidates import CandidateCollector, default_candidates
 from aster.data.jsonl import append_observations
 from aster.data.load import load_training_examples
-from aster.experiments import evaluate_runtime_ranking, template_holdout
+from aster.experiments import (
+    evaluate_fallback_policy,
+    evaluate_ranking,
+    fallback_pareto_sweep,
+    template_holdout,
+)
 from aster.integration.psql import PsqlExplainRunner, read_query
-from aster.models import RuntimeEnsemble
+from aster.models import PostgresCostRanker, RidgeRuntimeModel, RuntimeEnsemble
 from aster.ranking import rank_with_fallback
 
 
@@ -67,12 +72,30 @@ def cmd_collect(args) -> int:
 def cmd_train(args) -> int:
     examples = load_training_examples(args.dataset)
     split = template_holdout(examples, test_fraction=args.test_fraction, seed=args.seed)
+    train_examples = list(split.train)
+    test_examples = list(split.test)
+    postgres_cost = PostgresCostRanker()
+    ridge = RidgeRuntimeModel(alpha=args.ridge_alpha).fit(train_examples)
     model = RuntimeEnsemble(
         trees=args.trees,
         seed=args.seed,
         min_samples_leaf=args.min_samples_leaf,
-    ).fit(list(split.train))
-    metrics = evaluate_runtime_ranking(model, list(split.test))
+    ).fit(train_examples)
+
+    baseline_metrics = {
+        "postgres_estimated_cost": asdict(evaluate_ranking(postgres_cost, test_examples)),
+        "ridge_log_runtime": asdict(evaluate_ranking(ridge, test_examples)),
+        "random_forest_runtime": asdict(evaluate_ranking(model, test_examples)),
+    }
+    fallback_metrics = asdict(evaluate_fallback_policy(model, test_examples))
+    pareto = [
+        {
+            "max_log_std": point.max_log_std,
+            "min_predicted_gain": point.min_predicted_gain,
+            "metrics": asdict(point.metrics),
+        }
+        for point in fallback_pareto_sweep(model, test_examples)
+    ]
     metadata = {
         "model": "random_forest_runtime_baseline",
         "seed": args.seed,
@@ -81,7 +104,9 @@ def cmd_train(args) -> int:
         "test_examples": len(split.test),
         "train_templates": sorted(split.train_groups),
         "test_templates": sorted(split.test_groups),
-        "metrics": asdict(metrics),
+        "baseline_metrics": baseline_metrics,
+        "fallback_metrics": fallback_metrics,
+        "fallback_pareto": pareto,
         "code_revision": _revision(),
         "python": sys.version,
         "platform": platform.platform(),
@@ -117,13 +142,14 @@ def cmd_optimize(args) -> int:
         warmups=args.warmups,
         repetitions=args.repetitions,
     )
+    runtimes = [o.execution_time_ms for o in measured]
     result = {
         "selected_candidate": decision.selected.spec.candidate_id,
         "selected_settings": decision.selected.spec.settings,
         "fallback": decision.fallback,
         "reason": decision.reason,
         "decision_overhead_ms": decision.decision_overhead_ms,
-        "measured_execution_ms": [o.execution_time_ms for o in measured],
+        "measured_execution_ms": runtimes,
         "unique_candidates": len(discovered),
         "predictions": [
             {
@@ -168,6 +194,7 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--seed", type=int, default=7)
     train.add_argument("--trees", type=int, default=128)
     train.add_argument("--min-samples-leaf", type=int, default=2)
+    train.add_argument("--ridge-alpha", type=float, default=1.0)
     train.set_defaults(func=cmd_train)
 
     optimize = sub.add_parser("optimize", help="rank candidates, apply fallback, execute selected plan")

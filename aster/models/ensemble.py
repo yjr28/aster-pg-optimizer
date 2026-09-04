@@ -60,6 +60,10 @@ class RuntimeEnsemble:
         self._fitted = True
         return self
 
+    def score(self, plan: PlanDocument) -> float:
+        """Lower-is-better ranking score in predicted milliseconds."""
+        return self.predict(plan).runtime_ms
+
     def predict(self, plan: PlanDocument) -> RuntimePrediction:
         if not self._fitted:
             raise RuntimeError("model is not fitted")
