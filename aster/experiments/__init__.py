@@ -8,18 +8,22 @@ from .evaluate import (
     fallback_pareto_sweep,
 )
 from .split import HoldoutSplit, parameter_holdout, query_holdout, template_holdout, workload_holdout
+from .training import TrainingExperimentResult, TrainingProtocol, run_training_experiment
 
 __all__ = [
     "FallbackCurvePoint",
     "FallbackMetrics",
     "HoldoutSplit",
     "RankingMetrics",
+    "TrainingExperimentResult",
+    "TrainingProtocol",
     "evaluate_fallback_policy",
     "evaluate_ranking",
     "evaluate_runtime_ranking",
     "fallback_pareto_sweep",
     "parameter_holdout",
     "query_holdout",
+    "run_training_experiment",
     "template_holdout",
     "workload_holdout",
 ]
