@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aster-pg-optimizer"
+version = "0.1.0"
+description = "Learned query-plan ranking and safe execution integration for PostgreSQL"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=2.0,<3",
+  "scikit-learn>=1.5,<2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0,<9"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
