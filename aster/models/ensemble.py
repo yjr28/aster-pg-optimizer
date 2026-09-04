@@ -19,6 +19,8 @@ class TrainingExample:
     candidate_id: str = "unknown"
     query_template: str | None = None
     parameter_key: str | None = None
+    workload: str | None = None
+    dataset_version: str | None = None
 
 
 @dataclass(frozen=True)
@@ -29,20 +31,10 @@ class RuntimePrediction:
 
 
 class RuntimeEnsemble:
-    """First learned baseline: random-forest runtime model over plan-summary features.
-
-    It is intentionally not the final Aster model. The graph representation exists
-    separately and a graph model must outperform this baseline before replacing it.
-    """
-
     def __init__(self, *, trees: int = 64, seed: int = 7, min_samples_leaf: int = 2):
         self.vectorizer = DictVectorizer(sparse=False)
-        self.model = RandomForestRegressor(
-            n_estimators=trees,
-            random_state=seed,
-            min_samples_leaf=min_samples_leaf,
-            n_jobs=1,
-        )
+        self.model = RandomForestRegressor(n_estimators=trees, random_state=seed,
+                                           min_samples_leaf=min_samples_leaf, n_jobs=1)
         self._fitted = False
         self._root_cost_range: tuple[float, float] | None = None
 
@@ -61,7 +53,6 @@ class RuntimeEnsemble:
         return self
 
     def score(self, plan: PlanDocument) -> float:
-        """Lower-is-better ranking score in predicted milliseconds."""
         return self.predict(plan).runtime_ms
 
     def predict(self, plan: PlanDocument) -> RuntimePrediction:
@@ -71,12 +62,9 @@ class RuntimeEnsemble:
         x = self.vectorizer.transform([features])
         tree_predictions = np.array([tree.predict(x)[0] for tree in self.model.estimators_])
         log_mean = float(tree_predictions.mean())
-        log_std = float(tree_predictions.std(ddof=0))
-        return RuntimePrediction(
-            runtime_ms=max(1e-9, math.expm1(log_mean)),
-            log_std=log_std,
-            root_cost_log=float(features["root_total_cost_log"]),
-        )
+        return RuntimePrediction(runtime_ms=max(1e-9, math.expm1(log_mean)),
+                                 log_std=float(tree_predictions.std(ddof=0)),
+                                 root_cost_log=float(features["root_total_cost_log"]))
 
     def in_training_cost_domain(self, prediction: RuntimePrediction, *, margin: float = 0.15) -> bool:
         if self._root_cost_range is None:

@@ -26,36 +26,21 @@ def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
 
 
 def load_training_examples(path: str | Path) -> list[TrainingExample]:
-    """Aggregate repeated observations to one median-runtime plan example.
-
-    Grouping includes structural fingerprint so plan drift is never silently averaged
-    into one label.
-    """
-    groups: dict[tuple[str, str, str, str], list[dict[str, Any]]] = defaultdict(list)
+    """Aggregate repeated observations to one median-runtime physical-plan example."""
+    groups: dict[tuple[str, str, str, str, str], list[dict[str, Any]]] = defaultdict(list)
     for record in read_jsonl(path):
         provenance = record["provenance"]
-        key = (
-            provenance["workload"],
-            provenance["query_id"],
-            provenance["candidate_id"],
-            record["plan_fingerprint"],
-        )
+        key = (provenance["dataset_version"], provenance["workload"], provenance["query_id"],
+               provenance["candidate_id"], record["plan_fingerprint"])
         groups[key].append(record)
-
     examples: list[TrainingExample] = []
-    for (_, query_id, candidate_id, _), rows in groups.items():
+    for (dataset_version, workload, query_id, candidate_id, _), rows in groups.items():
         runtimes = [float(row["execution_time_ms"]) for row in rows]
-        first = rows[0]
-        provenance = first["provenance"]
-        plan_json = first["plan_json"]
-        examples.append(
-            TrainingExample(
-                plan=parse_explain_json(plan_json),
-                runtime_ms=float(statistics.median(runtimes)),
-                query_id=query_id,
-                candidate_id=candidate_id,
-                query_template=provenance.get("query_template"),
-                parameter_key=provenance.get("parameter_key"),
-            )
-        )
+        provenance = rows[0]["provenance"]
+        examples.append(TrainingExample(
+            plan=parse_explain_json(rows[0]["plan_json"]), runtime_ms=float(statistics.median(runtimes)),
+            query_id=query_id, candidate_id=candidate_id,
+            query_template=provenance.get("query_template"), parameter_key=provenance.get("parameter_key"),
+            workload=workload, dataset_version=dataset_version,
+        ))
     return examples
