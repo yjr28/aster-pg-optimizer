@@ -134,8 +134,13 @@ class MLPRuntimeModel:
         return self.predict_runtime_ms(plan)
 
 
-def _query_key(example: TrainingExample) -> tuple[str, str, str]:
-    return (example.dataset_version or "", example.workload or "", example.query_id)
+def _query_key(example: TrainingExample) -> tuple[str, str, str, str]:
+    return (
+        example.environment_sha256 or "",
+        example.dataset_version or "",
+        example.workload or "",
+        example.query_id,
+    )
 
 
 class QueryNormalizedRidgeModel:
@@ -160,7 +165,7 @@ class QueryNormalizedRidgeModel:
     def fit(self, examples: list[TrainingExample]) -> "QueryNormalizedRidgeModel":
         if len(examples) < 2:
             raise ValueError("at least 2 training examples are required")
-        grouped: dict[tuple[str, str, str], list[TrainingExample]] = defaultdict(list)
+        grouped: dict[tuple[str, str, str, str], list[TrainingExample]] = defaultdict(list)
         for example in examples:
             if example.runtime_ms <= 0:
                 raise ValueError("runtime labels must be positive")
@@ -171,7 +176,7 @@ class QueryNormalizedRidgeModel:
         for key, candidates in grouped.items():
             native = next((item for item in candidates if item.candidate_id == "native"), None)
             if native is None:
-                raise ValueError(f"training query {key[2]} has no native candidate")
+                raise ValueError(f"training query {key[3]} has no native candidate")
             for candidate in candidates:
                 rows.append(baseline_feature_dict(candidate.plan))
                 targets.append(math.log(candidate.runtime_ms / native.runtime_ms))
@@ -207,7 +212,7 @@ class PairwiseLogisticRanker:
         self.training_pairs = 0
 
     def fit(self, examples: list[TrainingExample]) -> "PairwiseLogisticRanker":
-        grouped: dict[tuple[str, str, str], list[TrainingExample]] = defaultdict(list)
+        grouped: dict[tuple[str, str, str, str], list[TrainingExample]] = defaultdict(list)
         for example in examples:
             if example.runtime_ms <= 0:
                 raise ValueError("runtime labels must be positive")
