@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass, replace
 
 from aster.models import TrainingExample
 
+from .split import parameter_holdout, template_holdout, workload_holdout
 from .training import TrainingProtocol, run_training_experiment
 
 
@@ -41,6 +42,23 @@ def _profile(examples: list[TrainingExample]) -> tuple[int, int, tuple[str, ...]
     return len(queries), len(templates), workloads, versions
 
 
+def _validate_regime_split(
+    examples: list[TrainingExample],
+    protocol: TrainingProtocol,
+    regime: str,
+) -> None:
+    splitters={
+        "template":template_holdout,
+        "parameter":parameter_holdout,
+        "workload":workload_holdout,
+    }
+    splitters[regime](
+        examples,
+        test_fraction=protocol.test_fraction,
+        seed=protocol.seed,
+    )
+
+
 def run_robustness_matrix(
     examples: list[TrainingExample],
     protocol: TrainingProtocol,
@@ -52,6 +70,10 @@ def run_robustness_matrix(
     This is an offline measured-corpus replay, not a live database benchmark. Each test
     query selects among candidate plans whose labels came from real EXPLAIN ANALYZE
     collection. Live paired execution remains a separate publication gate.
+
+    Only split-construction failures are downgraded to `unsupported_for_dataset`.
+    Training/model failures propagate: they must never be disguised as a dataset
+    limitation.
     """
     if not examples:
         raise ValueError("dataset is empty")
@@ -63,7 +85,7 @@ def run_robustness_matrix(
     for regime in regimes:
         regime_protocol=replace(protocol,split_regime=regime)
         try:
-            _model, experiment=run_training_experiment(examples,regime_protocol)
+            _validate_regime_split(examples,regime_protocol,regime)
         except ValueError as exc:
             results.append(RobustnessRegimeResult(
                 regime=regime,
@@ -72,6 +94,8 @@ def run_robustness_matrix(
                 metrics=None,
             ))
             continue
+
+        _model, experiment=run_training_experiment(examples,regime_protocol)
         results.append(RobustnessRegimeResult(
             regime=regime,
             status="ok",
