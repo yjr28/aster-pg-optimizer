@@ -81,9 +81,15 @@ class CandidateCollector:
     def measure(self, query: str, candidate: DiscoveredCandidate, *, workload: str, query_id: str,
                 dataset_version: str, run_seed: int, code_revision: str,
                 experiment_id: str | None = None, query_template: str | None = None,
-                parameter_key: str | None = None, warmups: int = 1, repetitions: int = 3) -> tuple[PlanObservation, ...]:
+                parameter_key: str | None = None, environment_sha256: str | None = None,
+                warmups: int = 1, repetitions: int = 3) -> tuple[PlanObservation, ...]:
         if warmups < 0 or repetitions < 1:
             raise ValueError("warmups must be >=0 and repetitions >=1")
+        if environment_sha256 is not None and (
+            len(environment_sha256) != 64
+            or any(char not in "0123456789abcdef" for char in environment_sha256.lower())
+        ):
+            raise ValueError("environment_sha256 must be a SHA-256 hex string when provided")
         for _ in range(warmups):
             self.runner.explain(query, candidate.spec.settings, analyze=True)
         version = self.runner.postgres_version()
@@ -103,6 +109,7 @@ class CandidateCollector:
                 candidate_id=candidate.spec.candidate_id, postgres_version=version,
                 dataset_version=dataset_version, run_seed=run_seed, code_revision=code_revision,
                 query_template=query_template, parameter_key=parameter_key,
+                environment_sha256=environment_sha256,
             )
             observations.append(PlanObservation(
                 provenance=provenance, plan_fingerprint=measured_fp,
