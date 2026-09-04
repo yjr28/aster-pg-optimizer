@@ -15,6 +15,8 @@ class Provenance:
     run_seed: int
     code_revision: str
     captured_at_utc: str
+    query_template: str | None = None
+    parameter_key: str | None = None
 
     @classmethod
     def now(
@@ -27,6 +29,8 @@ class Provenance:
         dataset_version: str,
         run_seed: int,
         code_revision: str,
+        query_template: str | None = None,
+        parameter_key: str | None = None,
     ) -> "Provenance":
         return cls(
             workload=workload,
@@ -37,6 +41,8 @@ class Provenance:
             run_seed=run_seed,
             code_revision=code_revision,
             captured_at_utc=datetime.now(timezone.utc).isoformat(),
+            query_template=query_template,
+            parameter_key=parameter_key,
         )
 
 

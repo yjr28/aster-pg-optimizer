@@ -16,6 +16,9 @@ class TrainingExample:
     plan: PlanDocument
     runtime_ms: float
     query_id: str
+    candidate_id: str = "unknown"
+    query_template: str | None = None
+    parameter_key: str | None = None
 
 
 @dataclass(frozen=True)

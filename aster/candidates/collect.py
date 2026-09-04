@@ -47,6 +47,8 @@ class CandidateCollector:
         dataset_version: str,
         run_seed: int,
         code_revision: str,
+        query_template: str | None = None,
+        parameter_key: str | None = None,
         warmups: int = 1,
         repetitions: int = 3,
     ) -> tuple[PlanObservation, ...]:
@@ -76,6 +78,8 @@ class CandidateCollector:
                 dataset_version=dataset_version,
                 run_seed=run_seed,
                 code_revision=code_revision,
+                query_template=query_template,
+                parameter_key=parameter_key,
             )
             observations.append(
                 PlanObservation(
