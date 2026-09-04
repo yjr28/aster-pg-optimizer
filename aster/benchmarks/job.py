@@ -209,7 +209,7 @@ def benchmark_job_workload(
                 selection_overhead_ms=selection_overhead_ms,
             )
             payload = {
-                "schema_version": 1,
+                "schema_version": 2,
                 "experiment_id": config.experiment_id,
                 "benchmark_input_sha256": config.benchmark_input_sha256,
                 "dataset_version": config.dataset_version,
@@ -235,6 +235,9 @@ def benchmark_job_workload(
                         "candidate_id": ranked.candidate.spec.candidate_id,
                         "runtime_ms": ranked.prediction.runtime_ms,
                         "log_std": ranked.prediction.log_std,
+                        "interval_lower_ms": ranked.prediction.interval_lower_ms,
+                        "interval_upper_ms": ranked.prediction.interval_upper_ms,
+                        "calibrated_log_radius": ranked.prediction.calibrated_log_radius,
                         "domain_distance": ranked.prediction.domain_distance,
                         "outside_training_range_count": ranked.prediction.outside_training_range_count,
                         "unseen_structural_features": list(ranked.prediction.unseen_structural_features),
@@ -263,7 +266,7 @@ def benchmark_job_workload(
                 raise
 
     result = {
-        "schema_version": 1,
+        "schema_version": 2,
         "experiment_id": config.experiment_id,
         "benchmark_input_sha256": config.benchmark_input_sha256,
         "dataset_version": config.dataset_version,
