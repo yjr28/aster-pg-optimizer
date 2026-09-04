@@ -169,7 +169,7 @@ def build_parser():
         p.add_argument("--max-outside-features",type=int,default=4)
     collect=sub.add_parser("collect"); db_args(collect); collect.add_argument("--out",type=Path,required=True); collect.add_argument("--code-revision"); collect.set_defaults(func=cmd_collect)
     train=sub.add_parser("train"); train.add_argument("--dataset",type=Path,required=True); train.add_argument("--model-out",type=Path,required=True)
-    train.add_argument("--test-fraction",type=float,default=.2); train.add_argument("--split-regime",choices=("template","parameter","workload","dataset","relation"),default="template")
+    train.add_argument("--test-fraction",type=float,default=.2); train.add_argument("--split-regime",choices=("template","parameter","workload","dataset","relation","environment"),default="template")
     train.add_argument("--calibration-fraction",type=float,default=.15); train.add_argument("--conformal-alpha",type=float,default=.10); train.add_argument("--min-log-scale",type=float,default=.05)
     train.add_argument("--seed",type=int,default=7); train.add_argument("--trees",type=int,default=128)
     train.add_argument("--min-samples-leaf",type=int,default=2); train.add_argument("--ridge-alpha",type=float,default=1.0); train.add_argument("--pairwise-c",type=float,default=1.0); train.set_defaults(func=cmd_train)
