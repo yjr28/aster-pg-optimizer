@@ -16,6 +16,7 @@ class CorpusInput:
     observations: int
     workloads: tuple[str, ...]
     dataset_versions: tuple[str, ...]
+    environments: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -29,6 +30,7 @@ class CombinedDataset:
     unique_query_plans: int
     workloads: tuple[str, ...]
     dataset_versions: tuple[str, ...]
+    environments: tuple[str, ...]
     inputs: tuple[CorpusInput, ...]
 
 
@@ -36,6 +38,8 @@ def _record_identity(record: dict) -> tuple:
     provenance=record.get("provenance") or {}
     return (
         provenance.get("experiment_id"),
+        provenance.get("environment_sha256") or "",
+        provenance.get("dataset_version"),
         provenance.get("workload"),
         provenance.get("query_id"),
         provenance.get("candidate_id"),
@@ -61,6 +65,7 @@ def combine_datasets(
     input_records: list[tuple[Path,list[dict]]]=[]
     all_workloads: set[str]=set()
     all_versions: set[str]=set()
+    all_environments: set[str]=set()
     for raw_path in paths:
         path=Path(raw_path)
         audit=audit_dataset(path)
@@ -69,14 +74,21 @@ def combine_datasets(
         records=read_jsonl(path)
         workloads=sorted({str(row["provenance"]["workload"]) for row in records})
         versions=sorted({str(row["provenance"]["dataset_version"]) for row in records})
+        environments=sorted({
+            str(row["provenance"].get("environment_sha256"))
+            for row in records
+            if row["provenance"].get("environment_sha256")
+        })
         all_workloads.update(workloads)
         all_versions.update(versions)
+        all_environments.update(environments)
         input_metadata.append(CorpusInput(
             path=str(path),
             sha256=audit.sha256,
             observations=audit.observations,
             workloads=tuple(workloads),
             dataset_versions=tuple(versions),
+            environments=tuple(environments),
         ))
         input_records.append((path,records))
 
@@ -116,6 +128,7 @@ def combine_datasets(
         unique_query_plans=combined_audit.unique_query_plans,
         workloads=tuple(sorted(all_workloads)),
         dataset_versions=tuple(sorted(all_versions)),
+        environments=tuple(sorted(all_environments)),
         inputs=tuple(input_metadata),
     )
     output.with_suffix(output.suffix+".manifest.json").write_text(
