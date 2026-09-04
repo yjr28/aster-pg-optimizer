@@ -22,6 +22,7 @@ class TrainingExample:
     parameter_key: str | None = None
     workload: str | None = None
     dataset_version: str | None = None
+    environment_sha256: str | None = None
 
 
 @dataclass(frozen=True)
@@ -74,7 +75,6 @@ class RuntimeEnsemble:
             raise RuntimeError("model is not fitted")
         if len(examples) < 2:
             raise ValueError("at least two calibration examples are required")
-        # Clear any previous calibrator so calibration residuals use raw ensemble output.
         self._calibrator = None
         predictions = [self.predict(example.plan) for example in examples]
         self._calibrator = ConformalLogCalibrator.fit(
