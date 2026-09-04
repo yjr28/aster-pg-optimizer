@@ -4,6 +4,17 @@ from dataclasses import asdict, dataclass
 from typing import Any, Iterable
 
 
+ENVIRONMENT_DIFF_SECTIONS = frozenset({
+    "host",
+    "postgres_metadata",
+    "settings",
+    "relations",
+    "indexes",
+    "statistics_state",
+    "statistics_targets",
+})
+
+
 @dataclass(frozen=True)
 class KeyedRowsDiff:
     added: tuple[dict[str, Any], ...]
@@ -51,6 +62,51 @@ class BenchmarkEnvironmentDiff:
         payload = asdict(self)
         payload["changed_sections"] = list(self.changed_sections)
         return payload
+
+
+@dataclass(frozen=True)
+class PerturbationValidation:
+    valid: bool
+    allowed_sections: tuple[str, ...]
+    required_sections: tuple[str, ...]
+    observed_sections: tuple[str, ...]
+    unexpected_sections: tuple[str, ...]
+    missing_required_sections: tuple[str, ...]
+
+    def to_jsonable(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def validate_perturbation(
+    diff: BenchmarkEnvironmentDiff,
+    *,
+    allowed_sections: Iterable[str],
+    required_sections: Iterable[str] = (),
+) -> PerturbationValidation:
+    """Validate that an environment change matches a declared experiment policy.
+
+    This is intentionally strict. A statistics-only experiment should not silently
+    include an index/config/host change. Callers can explicitly widen the allowed set
+    when a perturbation legitimately changes more than one section.
+    """
+    allowed = frozenset(allowed_sections)
+    required = frozenset(required_sections)
+    unknown = (allowed | required) - ENVIRONMENT_DIFF_SECTIONS
+    if unknown:
+        raise ValueError(f"unknown environment diff sections: {sorted(unknown)}")
+    if not required <= allowed:
+        raise ValueError("required_sections must be a subset of allowed_sections")
+    observed = frozenset(diff.changed_sections)
+    unexpected = tuple(sorted(observed - allowed))
+    missing = tuple(sorted(required - observed))
+    return PerturbationValidation(
+        valid=not unexpected and not missing,
+        allowed_sections=tuple(sorted(allowed)),
+        required_sections=tuple(sorted(required)),
+        observed_sections=tuple(sorted(observed)),
+        unexpected_sections=unexpected,
+        missing_required_sections=missing,
+    )
 
 
 def _require_environment(payload: dict[str, Any], label: str) -> None:
