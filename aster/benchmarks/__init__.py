@@ -1,3 +1,4 @@
+from .job import JobBenchmarkConfig, benchmark_job_workload, native_control_from_paired
 from .paired import (
     DistributionSummary,
     PairedBenchmarkResult,
@@ -20,4 +21,7 @@ __all__ = [
     "WorkloadVariantSummary",
     "WorkloadBenchmarkSummary",
     "summarize_workload_benchmark",
+    "JobBenchmarkConfig",
+    "benchmark_job_workload",
+    "native_control_from_paired",
 ]
