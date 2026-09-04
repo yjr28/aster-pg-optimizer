@@ -8,9 +8,13 @@ version = "0.1.0"
 description = "Learned query-plan ranking and safe execution integration for PostgreSQL"
 requires-python = ">=3.11"
 dependencies = [
+  "joblib>=1.4,<2",
   "numpy>=2.0,<3",
   "scikit-learn>=1.5,<2",
 ]
+
+[project.scripts]
+aster = "aster.cli.main:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0,<9"]

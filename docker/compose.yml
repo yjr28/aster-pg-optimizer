@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: aster
+      POSTGRES_PASSWORD: aster
+      POSTGRES_DB: aster
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aster -d aster"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    volumes:
+      - ./init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
