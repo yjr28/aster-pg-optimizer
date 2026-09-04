@@ -2,18 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-
-_ALLOWED_PLANNER_GUCS = {
-    "enable_hashjoin",
-    "enable_mergejoin",
-    "enable_nestloop",
-    "enable_seqscan",
-    "enable_indexscan",
-    "enable_indexonlyscan",
-    "enable_bitmapscan",
-    "enable_material",
-    "enable_memoize",
-}
+from aster.planner import validate_planner_setting
 
 
 @dataclass(frozen=True)
@@ -22,20 +11,14 @@ class CandidateSpec:
     settings: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        unknown = set(self.settings) - _ALLOWED_PLANNER_GUCS
-        if unknown:
-            raise ValueError(f"unsupported planner GUC(s): {sorted(unknown)}")
-        invalid = {k: v for k, v in self.settings.items() if v not in {"on", "off"}}
-        if invalid:
-            raise ValueError(f"planner settings must be on/off: {invalid}")
+        if not self.candidate_id:
+            raise ValueError("candidate_id must not be empty")
+        for name, value in self.settings.items():
+            validate_planner_setting(name, value)
 
 
 def default_candidates() -> tuple[CandidateSpec, ...]:
-    """Small, bounded first-stage search over PostgreSQL physical-planner switches.
-
-    These settings do not guarantee a unique physical plan. CandidateCollector
-    canonicalizes plans before any measured execution and drops duplicates.
-    """
+    """Fast bounded search over PostgreSQL physical-planner switches."""
     return (
         CandidateSpec("native", {}),
         CandidateSpec("no_hashjoin", {"enable_hashjoin": "off"}),
@@ -55,3 +38,30 @@ def default_candidates() -> tuple[CandidateSpec, ...]:
             {"enable_hashjoin": "off", "enable_mergejoin": "off"},
         ),
     )
+
+
+def research_candidates() -> tuple[CandidateSpec, ...]:
+    """Candidate set for join-order research workloads such as JOB.
+
+    In addition to physical join-method interventions, force GEQO at two or more FROM
+    items and vary its documented random seed. PostgreSQL's GEQO seed changes which
+    join paths are explored. CandidateCollector still fingerprints/deduplicates the
+    resulting physical plans before any EXPLAIN ANALYZE executions are measured.
+    """
+    candidates = list(default_candidates())
+    for seed in ("0.00", "0.20", "0.40", "0.60", "0.80", "1.00"):
+        candidates.append(CandidateSpec(
+            f"geqo_seed_{seed.replace('.', '')}",
+            {"geqo": "on", "geqo_threshold": "2", "geqo_seed": seed},
+        ))
+    candidates.extend((
+        CandidateSpec(
+            "geqo_low_effort",
+            {"geqo": "on", "geqo_threshold": "2", "geqo_seed": "0.50", "geqo_effort": "1"},
+        ),
+        CandidateSpec(
+            "geqo_high_effort",
+            {"geqo": "on", "geqo_threshold": "2", "geqo_seed": "0.50", "geqo_effort": "10"},
+        ),
+    ))
+    return tuple(candidates)
