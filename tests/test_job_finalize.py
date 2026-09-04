@@ -58,6 +58,6 @@ def test_finalize_rejects_failures_mixed_dataset_versions_and_environment_tamper
 
     environment=tmp_path/"environment"; _write_collection(environment,environment="a"*64)
     env_shard=environment/"queries"/"2b.jsonl"
-    env_shard.write_text(env_shard.read_text().replace('"a'*0, '"a'*0) if False else env_shard.read_text().replace("a"*64,"b"*64))
+    env_shard.write_text(env_shard.read_text().replace("a"*64,"b"*64))
     with pytest.raises(ValueError,match="mixed benchmark environment"):
         finalize_job_collection(environment,tmp_path/"z.jsonl")
