@@ -4,13 +4,17 @@ from aster.data import audit_dataset
 from aster.plans import parse_explain_json, plan_fingerprint
 
 
-def record(*, experiment="exp-1", query="q1", candidate="native", repetition=0, node="Seq Scan", fingerprint=None):
+def record(*, experiment="exp-1", query="q1", candidate="native", repetition=0, node="Seq Scan",
+           fingerprint=None, environment=None):
     plan = {"Plan": {"Node Type": node, "Relation Name": "orders", "Total Cost": 10, "Plan Rows": 100}}
     computed = plan_fingerprint(parse_explain_json(plan))
-    return {"provenance": {"experiment_id": experiment, "workload": "unit", "query_id": query,
+    provenance={"experiment_id": experiment, "workload": "unit", "query_id": query,
             "candidate_id": candidate, "postgres_version": "17.4", "dataset_version": "v1",
             "run_seed": 7, "code_revision": "abc", "captured_at_utc": "2026-09-04T00:00:00+00:00",
-            "query_template": "t1", "parameter_key": "p1"},
+            "query_template": "t1", "parameter_key": "p1"}
+    if environment is not None:
+        provenance["environment_sha256"]=environment
+    return {"provenance": provenance,
             "plan_fingerprint": fingerprint or computed, "planner_settings": {},
             "planning_time_ms": 0.1, "execution_time_ms": 5.0,
             "repetition": repetition, "plan_json": plan}
@@ -26,6 +30,7 @@ def test_integrity_report_accepts_complete_contiguous_repetitions(tmp_path):
     assert report.ok and report.observations == 2 and report.experiments == 1
     assert report.unique_query_plans == 1 and report.min_repetitions_per_plan == 2
     assert len(report.sha256) == 64
+    assert any("no environment_sha256" in warning for warning in report.warnings)
 
 
 def test_integrity_report_rejects_fingerprint_mismatch_and_duplicate_repetition(tmp_path):
@@ -39,3 +44,22 @@ def test_integrity_report_rejects_fingerprint_mismatch_and_duplicate_repetition(
 def test_integrity_report_rejects_candidate_plan_drift_within_experiment(tmp_path):
     path = tmp_path / "drift.jsonl"; write(path, [record(node="Seq Scan"), record(node="Index Scan")])
     assert any("candidate plan drift" in error for error in audit_dataset(path).errors)
+
+
+def test_integrity_validates_environment_hash_and_separates_environment_query_identity(tmp_path):
+    path=tmp_path/"environments.jsonl"
+    write(path,[
+        record(experiment="exp-a",environment="a"*64),
+        record(experiment="exp-b",environment="b"*64),
+    ])
+    report=audit_dataset(path)
+    assert report.ok
+    assert report.queries == 2
+    assert report.unique_query_plans == 2
+    assert not any("no environment_sha256" in warning for warning in report.warnings)
+
+    bad_path=tmp_path/"bad-environment.jsonl"
+    write(bad_path,[record(environment="not-a-sha")])
+    bad_report=audit_dataset(bad_path)
+    assert not bad_report.ok
+    assert any("environment_sha256" in error for error in bad_report.errors)
