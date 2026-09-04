@@ -19,6 +19,7 @@ class FinalizedJobDataset:
     experiment_id: str
     dataset_version: str
     benchmark_input_sha256: str
+    environment_sha256: str | None
     query_count: int
     observation_count: int
     unique_query_plans: int
@@ -31,6 +32,7 @@ class FinalizedTpchDataset:
     experiment_id: str
     dataset_version: str
     benchmark_input_sha256: str
+    environment_sha256: str | None
     specification_version: str
     scale_factor: float | None
     query_count: int
@@ -82,6 +84,9 @@ def _merge_and_audit_collection(
         experiment_id = str(config["experiment_id"])
         dataset_version = str(config["dataset_version"])
         benchmark_input_sha256 = str(config["benchmark_input_sha256"])
+        environment_sha256 = config.get("environment_sha256")
+        if environment_sha256 is not None:
+            environment_sha256 = str(environment_sha256)
         expected_queries = int(summary["query_count"])
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError("collection manifest is missing required config/summary fields") from exc
@@ -114,6 +119,8 @@ def _merge_and_audit_collection(
                             raise ValueError(f"mixed experiment in {shard}")
                         if provenance.get("dataset_version") != dataset_version:
                             raise ValueError(f"mixed dataset version in {shard}")
+                        if provenance.get("environment_sha256") != environment_sha256:
+                            raise ValueError(f"mixed benchmark environment in {shard}")
                         if provenance.get("workload") != expected_workload:
                             raise ValueError(f"non-{expected_workload} workload record in {shard}")
                         if provenance.get("query_id") != shard_query_id:
@@ -137,6 +144,7 @@ def _merge_and_audit_collection(
         "experiment_id": experiment_id,
         "dataset_version": dataset_version,
         "benchmark_input_sha256": benchmark_input_sha256,
+        "environment_sha256": environment_sha256,
         "query_count": expected_queries,
         "observation_count": audit.observations,
         "unique_query_plans": audit.unique_query_plans,
