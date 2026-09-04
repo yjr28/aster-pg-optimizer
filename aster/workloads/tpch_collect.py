@@ -25,6 +25,7 @@ class TpchCollectionConfig:
     scale_factor: float | None
     run_seed: int
     code_revision: str
+    environment_sha256: str | None = None
     warmups: int = 1
     repetitions: int = 3
 
@@ -39,6 +40,8 @@ class TpchCollectionConfig:
             raise ValueError("specification_version is required")
         if self.scale_factor is not None and self.scale_factor <= 0:
             raise ValueError("scale_factor must be positive")
+        if self.environment_sha256 is not None and len(self.environment_sha256) != 64:
+            raise ValueError("environment_sha256 must be a SHA-256 hex string when provided")
         if self.warmups < 0 or self.repetitions < 1:
             raise ValueError("warmups must be >=0 and repetitions >=1")
 
@@ -72,7 +75,13 @@ def _write_observation_shard(path: Path, observations: Iterable) -> int:
     return len(rows)
 
 
-def _validate_completed_shard(path: Path, *, query_id: str, experiment_id: str) -> int:
+def _validate_completed_shard(
+    path: Path,
+    *,
+    query_id: str,
+    experiment_id: str,
+    environment_sha256: str | None,
+) -> int:
     count = 0
     with path.open("r", encoding="utf-8") as handle:
         for line_number, line in enumerate(handle, start=1):
@@ -87,6 +96,8 @@ def _validate_completed_shard(path: Path, *, query_id: str, experiment_id: str) 
                 raise ValueError(f"completed shard {path} contains another query id")
             if provenance.get("experiment_id") != experiment_id:
                 raise ValueError(f"completed shard {path} belongs to another experiment")
+            if provenance.get("environment_sha256") != environment_sha256:
+                raise ValueError(f"completed shard {path} belongs to another benchmark environment")
             count += 1
     if count == 0:
         raise ValueError(f"completed shard is empty: {path}")
@@ -116,7 +127,10 @@ def collect_tpch_workload(
         shard = shard_dir / f"{query.query_id}.jsonl"
         if resume and shard.exists():
             _validate_completed_shard(
-                shard, query_id=query.query_id, experiment_id=config.experiment_id
+                shard,
+                query_id=query.query_id,
+                experiment_id=config.experiment_id,
+                environment_sha256=config.environment_sha256,
             )
             skipped += 1
             continue
@@ -138,6 +152,7 @@ def collect_tpch_workload(
                     run_seed=config.run_seed,
                     code_revision=config.code_revision,
                     experiment_id=config.experiment_id,
+                    environment_sha256=config.environment_sha256,
                     warmups=config.warmups,
                     repetitions=config.repetitions,
                 ))
