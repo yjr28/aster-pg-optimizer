@@ -12,6 +12,7 @@ from .job import (
     build_job_manifest,
     load_job_queries,
 )
+from .preflight import JobPreflightManifest, build_job_preflight
 
 __all__ = [
     "EXPECTED_IMDB_TABLES",
@@ -24,4 +25,6 @@ __all__ = [
     "JobWorkloadManifest",
     "build_job_manifest",
     "load_job_queries",
+    "JobPreflightManifest",
+    "build_job_preflight",
 ]
