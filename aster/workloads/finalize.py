@@ -6,10 +6,12 @@ import re
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
 from aster.data import audit_dataset
 
-_QUERY_SHARD_RE = re.compile(r"^(?P<family>[1-9][0-9]*)(?P<variant>[a-z])\.jsonl$")
+_JOB_QUERY_SHARD_RE = re.compile(r"^(?P<family>[1-9][0-9]*)(?P<variant>[a-z])\.jsonl$")
+_TPCH_QUERY_SHARD_RE = re.compile(r"^q(?P<number>[1-9]|1[0-9]|2[0-2])\.jsonl$")
 
 
 @dataclass(frozen=True)
@@ -24,11 +26,32 @@ class FinalizedJobDataset:
     output_path: str
 
 
-def _shard_sort_key(path: Path) -> tuple[int, str]:
-    match = _QUERY_SHARD_RE.fullmatch(path.name)
+@dataclass(frozen=True)
+class FinalizedTpchDataset:
+    experiment_id: str
+    dataset_version: str
+    benchmark_input_sha256: str
+    specification_version: str
+    scale_factor: float | None
+    query_count: int
+    observation_count: int
+    unique_query_plans: int
+    dataset_sha256: str
+    output_path: str
+
+
+def _job_shard_sort_key(path: Path) -> tuple[int, str]:
+    match = _JOB_QUERY_SHARD_RE.fullmatch(path.name)
     if not match:
         return (10**9, path.name)
     return int(match.group("family")), match.group("variant")
+
+
+def _tpch_shard_sort_key(path: Path) -> tuple[int, str]:
+    match = _TPCH_QUERY_SHARD_RE.fullmatch(path.name)
+    if not match:
+        return (10**9, path.name)
+    return int(match.group("number")), ""
 
 
 def _load_collection_manifest(root: Path) -> dict:
@@ -39,12 +62,14 @@ def _load_collection_manifest(root: Path) -> dict:
         raise ValueError(f"invalid collection manifest: {path}") from exc
 
 
-def finalize_job_collection(
+def _merge_and_audit_collection(
     collection_dir: str | Path,
     output_path: str | Path,
     *,
-    overwrite: bool = False,
-) -> FinalizedJobDataset:
+    expected_workload: str,
+    shard_sort_key: Callable[[Path], tuple[int, str]],
+    overwrite: bool,
+):
     root = Path(collection_dir)
     output = Path(output_path)
     if output.exists() and not overwrite:
@@ -65,7 +90,7 @@ def finalize_job_collection(
     if failures:
         raise ValueError(f"cannot finalize with unresolved query failures: {[p.stem for p in failures]}")
 
-    shards = sorted((root / "queries").glob("*.jsonl"), key=_shard_sort_key)
+    shards = sorted((root / "queries").glob("*.jsonl"), key=shard_sort_key)
     if len(shards) != expected_queries:
         raise ValueError(f"expected {expected_queries} completed query shards, found {len(shards)}")
 
@@ -89,8 +114,8 @@ def finalize_job_collection(
                             raise ValueError(f"mixed experiment in {shard}")
                         if provenance.get("dataset_version") != dataset_version:
                             raise ValueError(f"mixed dataset version in {shard}")
-                        if provenance.get("workload") != "job":
-                            raise ValueError(f"non-JOB workload record in {shard}")
+                        if provenance.get("workload") != expected_workload:
+                            raise ValueError(f"non-{expected_workload} workload record in {shard}")
                         if provenance.get("query_id") != shard_query_id:
                             raise ValueError(f"query id mismatch in {shard}")
                         target.write(line if line.endswith("\n") else line + "\n")
@@ -108,16 +133,20 @@ def finalize_job_collection(
         if tmp.exists():
             tmp.unlink()
 
-    result = FinalizedJobDataset(
-        experiment_id=experiment_id,
-        dataset_version=dataset_version,
-        benchmark_input_sha256=benchmark_input_sha256,
-        query_count=expected_queries,
-        observation_count=audit.observations,
-        unique_query_plans=audit.unique_query_plans,
-        dataset_sha256=audit.sha256,
-        output_path=str(output),
-    )
+    common = {
+        "experiment_id": experiment_id,
+        "dataset_version": dataset_version,
+        "benchmark_input_sha256": benchmark_input_sha256,
+        "query_count": expected_queries,
+        "observation_count": audit.observations,
+        "unique_query_plans": audit.unique_query_plans,
+        "dataset_sha256": audit.sha256,
+        "output_path": str(output),
+    }
+    return root, manifest, common, audit
+
+
+def _write_finalized_manifest(root: Path, result, audit) -> None:
     finalized_manifest = {
         "schema_version": 1,
         "finalized_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -127,4 +156,51 @@ def finalize_job_collection(
     (root / "finalized_manifest.json").write_text(
         json.dumps(finalized_manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
+
+
+def finalize_job_collection(
+    collection_dir: str | Path,
+    output_path: str | Path,
+    *,
+    overwrite: bool = False,
+) -> FinalizedJobDataset:
+    root, _manifest, common, audit = _merge_and_audit_collection(
+        collection_dir,
+        output_path,
+        expected_workload="job",
+        shard_sort_key=_job_shard_sort_key,
+        overwrite=overwrite,
+    )
+    result = FinalizedJobDataset(**common)
+    _write_finalized_manifest(root, result, audit)
+    return result
+
+
+def finalize_tpch_collection(
+    collection_dir: str | Path,
+    output_path: str | Path,
+    *,
+    overwrite: bool = False,
+) -> FinalizedTpchDataset:
+    root, manifest, common, audit = _merge_and_audit_collection(
+        collection_dir,
+        output_path,
+        expected_workload="tpch",
+        shard_sort_key=_tpch_shard_sort_key,
+        overwrite=overwrite,
+    )
+    try:
+        config = manifest["config"]
+        specification_version = str(config["specification_version"])
+        scale_factor = config.get("scale_factor")
+        if scale_factor is not None:
+            scale_factor = float(scale_factor)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("TPC-H collection manifest is missing specification metadata") from exc
+    result = FinalizedTpchDataset(
+        specification_version=specification_version,
+        scale_factor=scale_factor,
+        **common,
+    )
+    _write_finalized_manifest(root, result, audit)
     return result
