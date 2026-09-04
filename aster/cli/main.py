@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from aster.artifacts import load_model, save_model
 from aster.benchmarks import run_paired_benchmark
+from aster.benchmarks.environment import capture_benchmark_environment
 from aster.candidates import CandidateCollector, default_candidates
 from aster.data import audit_dataset
 from aster.data.jsonl import append_observations
@@ -33,17 +34,30 @@ def _runner(args):
     return PsqlExplainRunner(dsn, timeout_s=args.timeout)
 
 
+def _write_environment_sidecar(path: Path, environment) -> None:
+    sidecar=Path(str(path)+".environment.json")
+    sidecar.parent.mkdir(parents=True,exist_ok=True)
+    sidecar.write_text(
+        json.dumps(environment.to_jsonable(),indent=2,sort_keys=True)+"\n",
+        encoding="utf-8",
+    )
+
+
 def cmd_collect(args):
-    runner = _runner(args); query = read_query(args.sql_file); collector = CandidateCollector(runner)
-    discovered = collector.discover(query, default_candidates()); experiment_id = args.experiment_id or str(uuid4()); total = 0
+    runner=_runner(args); environment=capture_benchmark_environment(runner)
+    query=read_query(args.sql_file); collector=CandidateCollector(runner)
+    discovered=collector.discover(query,default_candidates()); experiment_id=args.experiment_id or str(uuid4()); total=0
     for candidate in discovered:
-        total += append_observations(args.out, collector.measure(query, candidate, workload=args.workload,
-            query_id=args.query_id, dataset_version=args.dataset_version, run_seed=args.seed,
-            code_revision=args.code_revision or _revision(), experiment_id=experiment_id,
-            query_template=args.query_template, parameter_key=args.parameter_key,
+        total += append_observations(args.out, collector.measure(query,candidate,workload=args.workload,
+            query_id=args.query_id,dataset_version=args.dataset_version,run_seed=args.seed,
+            code_revision=args.code_revision or _revision(),experiment_id=experiment_id,
+            query_template=args.query_template,parameter_key=args.parameter_key,
+            environment_sha256=environment.environment_sha256,
             warmups=args.warmups,repetitions=args.repetitions))
+    _write_environment_sidecar(args.out,environment)
     print(json.dumps({"experiment_id":experiment_id,"query_id":args.query_id,"candidate_specs":len(default_candidates()),
-                      "unique_plans":len(discovered),"observations_written":total,"out":str(args.out)}, sort_keys=True)); return 0
+                      "unique_plans":len(discovered),"observations_written":total,"out":str(args.out),
+                      "environment_sha256":environment.environment_sha256}, sort_keys=True)); return 0
 
 
 def cmd_train(args):
@@ -109,21 +123,25 @@ def _prediction_json(ranked):
 
 
 def cmd_optimize(args):
-    runner=_runner(args); query=read_query(args.sql_file); model=load_model(args.model)
+    runner=_runner(args); environment=capture_benchmark_environment(runner)
+    query=read_query(args.sql_file); model=load_model(args.model)
     collector,discovered,decision,_selection_overhead_ms=_decision(runner,query,model,args)
     measured=collector.measure(query,decision.selected,workload=args.workload,query_id=args.query_id,
                                dataset_version=args.dataset_version,run_seed=args.seed,code_revision=_revision(),
                                experiment_id=args.experiment_id or str(uuid4()),query_template=args.query_template,
-                               parameter_key=args.parameter_key,warmups=args.warmups,repetitions=args.repetitions)
+                               parameter_key=args.parameter_key,environment_sha256=environment.environment_sha256,
+                               warmups=args.warmups,repetitions=args.repetitions)
     result={"selected_candidate":decision.selected.spec.candidate_id,"selected_settings":decision.selected.spec.settings,
             "fallback":decision.fallback,"reason":decision.reason,"decision_overhead_ms":decision.decision_overhead_ms,
+            "environment_sha256":environment.environment_sha256,
             "measured_execution_ms":[o.execution_time_ms for o in measured],"unique_candidates":len(discovered),
             "predictions":[_prediction_json(x) for x in decision.ranked]}
     print(json.dumps(result,indent=2,sort_keys=True)); return 0
 
 
 def cmd_benchmark(args):
-    runner=_runner(args); query=read_query(args.sql_file); model=load_model(args.model)
+    runner=_runner(args); environment=capture_benchmark_environment(runner)
+    query=read_query(args.sql_file); model=load_model(args.model)
     _collector,discovered,decision,selection_overhead_ms=_decision(runner,query,model,args)
     benchmark=run_paired_benchmark(runner,query,decision.native,decision.selected,
                                    selection_overhead_ms=selection_overhead_ms,
@@ -135,6 +153,7 @@ def cmd_benchmark(args):
         "query_template":args.query_template,
         "parameter_key":args.parameter_key,
         "dataset_version":args.dataset_version,
+        "environment":environment.to_jsonable(),
         "seed":args.seed,
         "code_revision":_revision(),
         "unique_candidates":len(discovered),
