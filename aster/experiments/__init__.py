@@ -7,7 +7,7 @@ from .evaluate import (
     evaluate_runtime_ranking,
     fallback_pareto_sweep,
 )
-from .split import HoldoutSplit, parameter_holdout, template_holdout, workload_holdout
+from .split import HoldoutSplit, parameter_holdout, query_holdout, template_holdout, workload_holdout
 
 __all__ = [
     "FallbackCurvePoint",
@@ -19,6 +19,7 @@ __all__ = [
     "evaluate_runtime_ranking",
     "fallback_pareto_sweep",
     "parameter_holdout",
+    "query_holdout",
     "template_holdout",
     "workload_holdout",
 ]
