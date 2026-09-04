@@ -18,16 +18,19 @@ class Provenance:
     captured_at_utc: str
     query_template: str | None = None
     parameter_key: str | None = None
+    environment_sha256: str | None = None
 
     @classmethod
     def now(cls, *, experiment_id: str, workload: str, query_id: str, candidate_id: str,
             postgres_version: str, dataset_version: str, run_seed: int, code_revision: str,
-            query_template: str | None = None, parameter_key: str | None = None) -> "Provenance":
+            query_template: str | None = None, parameter_key: str | None = None,
+            environment_sha256: str | None = None) -> "Provenance":
         return cls(experiment_id=experiment_id, workload=workload, query_id=query_id,
                    candidate_id=candidate_id, postgres_version=postgres_version,
                    dataset_version=dataset_version, run_seed=run_seed, code_revision=code_revision,
                    captured_at_utc=datetime.now(timezone.utc).isoformat(),
-                   query_template=query_template, parameter_key=parameter_key)
+                   query_template=query_template, parameter_key=parameter_key,
+                   environment_sha256=environment_sha256)
 
 
 @dataclass(frozen=True)
