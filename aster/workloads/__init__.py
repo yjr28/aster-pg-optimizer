@@ -31,6 +31,7 @@ from .tpch import (
     build_tpch_workload_manifest,
     load_tpch_queries,
 )
+from .tpch_collect import TpchCollectionConfig, TpchCollectionSummary, collect_tpch_workload
 
 __all__ = [
     "JobCollectionConfig",
@@ -61,4 +62,7 @@ __all__ = [
     "build_tpch_dataset_manifest",
     "build_tpch_workload_manifest",
     "load_tpch_queries",
+    "TpchCollectionConfig",
+    "TpchCollectionSummary",
+    "collect_tpch_workload",
 ]
