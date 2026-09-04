@@ -17,18 +17,66 @@ class DiscoveredCandidate:
     plan_json: list[dict]
 
 
+@dataclass(frozen=True)
+class CandidatePlanGroup:
+    fingerprint: str
+    representative_candidate_id: str
+    candidate_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class CandidateDiscoveryReport:
+    attempted_interventions: int
+    unique_plan_count: int
+    duplicate_interventions: int
+    unique_candidates: tuple[DiscoveredCandidate, ...]
+    plan_groups: tuple[CandidatePlanGroup, ...]
+
+    @property
+    def uniqueness_ratio(self) -> float:
+        return self.unique_plan_count / self.attempted_interventions if self.attempted_interventions else 0.0
+
+
 class CandidateCollector:
     def __init__(self, runner: ExplainRunner):
         self.runner = runner
 
-    def discover(self, query: str, candidates: tuple[CandidateSpec, ...] | list[CandidateSpec]) -> tuple[DiscoveredCandidate, ...]:
+    def discover_report(
+        self,
+        query: str,
+        candidates: tuple[CandidateSpec, ...] | list[CandidateSpec],
+    ) -> CandidateDiscoveryReport:
+        specs = tuple(candidates)
         unique: dict[str, DiscoveredCandidate] = {}
-        for spec in candidates:
+        grouped_ids: dict[str, list[str]] = {}
+        for spec in specs:
             raw = self.runner.explain(query, spec.settings, analyze=False)
             plan = parse_explain_json(raw)
             fingerprint = plan_fingerprint(plan)
-            unique.setdefault(fingerprint, DiscoveredCandidate(spec=spec, fingerprint=fingerprint, plan_json=raw))
-        return tuple(unique.values())
+            grouped_ids.setdefault(fingerprint, []).append(spec.candidate_id)
+            unique.setdefault(
+                fingerprint,
+                DiscoveredCandidate(spec=spec, fingerprint=fingerprint, plan_json=raw),
+            )
+        unique_candidates = tuple(unique.values())
+        groups = tuple(
+            CandidatePlanGroup(
+                fingerprint=fingerprint,
+                representative_candidate_id=unique[fingerprint].spec.candidate_id,
+                candidate_ids=tuple(grouped_ids[fingerprint]),
+            )
+            for fingerprint in unique
+        )
+        return CandidateDiscoveryReport(
+            attempted_interventions=len(specs),
+            unique_plan_count=len(unique_candidates),
+            duplicate_interventions=len(specs) - len(unique_candidates),
+            unique_candidates=unique_candidates,
+            plan_groups=groups,
+        )
+
+    def discover(self, query: str, candidates: tuple[CandidateSpec, ...] | list[CandidateSpec]) -> tuple[DiscoveredCandidate, ...]:
+        return self.discover_report(query, candidates).unique_candidates
 
     def measure(self, query: str, candidate: DiscoveredCandidate, *, workload: str, query_id: str,
                 dataset_version: str, run_seed: int, code_revision: str,
