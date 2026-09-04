@@ -2,6 +2,7 @@ import pytest
 
 from aster.experiments import (
     dataset_version_holdout,
+    environment_holdout,
     parameter_holdout,
     query_holdout,
     relation_holdout,
@@ -21,6 +22,7 @@ def example(
     candidate="native",
     dataset="v1",
     relation=None,
+    environment=None,
 ):
     raw_plan={"Node Type":"Seq Scan"}
     if relation:
@@ -34,6 +36,7 @@ def example(
         parameter,
         workload,
         dataset,
+        environment,
     )
 
 
@@ -108,6 +111,31 @@ def test_dataset_version_holdout_has_zero_snapshot_leakage_and_keeps_candidates_
             assert {
                 e.candidate_id for e in split.test
                 if e.dataset_version==dataset and e.query_id==query_id
+            } == {"native","alt"}
+
+
+def test_environment_holdout_has_zero_state_leakage_and_keeps_candidates_together():
+    examples=[]
+    for environment in ("a"*64,"b"*64):
+        for query_id in ("q1","q2"):
+            for candidate in ("native","alt"):
+                examples.append(example(
+                    query_id,
+                    f"template-{query_id}",
+                    workload="job",
+                    candidate=candidate,
+                    dataset="job-imdb-v1",
+                    environment=environment,
+                ))
+    split=environment_holdout(examples,test_fraction=0.5,seed=5)
+    assert split.train_groups.isdisjoint(split.test_groups)
+    assert {e.environment_sha256 for e in split.train} == split.train_groups
+    assert {e.environment_sha256 for e in split.test} == split.test_groups
+    for environment in split.test_groups:
+        for query_id in ("q1","q2"):
+            assert {
+                e.candidate_id for e in split.test
+                if e.environment_sha256==environment and e.query_id==query_id
             } == {"native","alt"}
 
 
