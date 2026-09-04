@@ -13,7 +13,23 @@ from aster.models import (
 )
 
 from .evaluate import evaluate_fallback_policy, evaluate_ranking, fallback_pareto_sweep
-from .split import parameter_holdout, query_holdout, template_holdout, workload_holdout
+from .split import (
+    dataset_version_holdout,
+    parameter_holdout,
+    query_holdout,
+    relation_holdout,
+    template_holdout,
+    workload_holdout,
+)
+
+
+SUPPORTED_SPLIT_REGIMES = frozenset({
+    "template",
+    "parameter",
+    "workload",
+    "dataset",
+    "relation",
+})
 
 
 @dataclass(frozen=True)
@@ -33,7 +49,7 @@ class TrainingProtocol:
     mlp_max_iter: int = 500
 
     def __post_init__(self) -> None:
-        if self.split_regime not in {"template", "parameter", "workload"}:
+        if self.split_regime not in SUPPORTED_SPLIT_REGIMES:
             raise ValueError(f"unsupported split regime: {self.split_regime}")
         if not 0 < self.test_fraction < 1:
             raise ValueError("test_fraction must be between 0 and 1")
@@ -60,6 +76,7 @@ class TrainingExperimentResult:
     test_examples: int
     train_groups: tuple[str, ...]
     test_groups: tuple[str, ...]
+    split_notes: tuple[str, ...]
     calibration_query_groups: tuple[str, ...]
     calibration: dict
     test_intervals: dict
@@ -77,6 +94,8 @@ def _primary_split(examples: list[TrainingExample], protocol: TrainingProtocol):
         "template": template_holdout,
         "parameter": parameter_holdout,
         "workload": workload_holdout,
+        "dataset": dataset_version_holdout,
+        "relation": relation_holdout,
     }
     return splitters[protocol.split_regime](
         examples,
@@ -199,6 +218,7 @@ def run_training_experiment(
         test_examples=len(test),
         train_groups=tuple(sorted(split.train_groups)),
         test_groups=tuple(sorted(split.test_groups)),
+        split_notes=tuple(split.notes),
         calibration_query_groups=calibration_groups,
         calibration=calibration_metadata,
         test_intervals=_interval_diagnostics(model, test),
