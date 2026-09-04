@@ -6,18 +6,12 @@ import subprocess
 from pathlib import Path
 from typing import Protocol
 
+from aster.planner import render_set_local
+
 
 class ExplainRunner(Protocol):
     def explain(self, query: str, settings: dict[str, str], *, analyze: bool) -> list[dict]: ...
     def postgres_version(self) -> str: ...
-
-
-def _quote_setting(name: str, value: str) -> str:
-    # CandidateSpec validates names and on/off values. This extra check keeps this
-    # boundary safe if another caller constructs settings directly.
-    if not name.replace("_", "").isalnum() or value not in {"on", "off"}:
-        raise ValueError(f"unsafe PostgreSQL setting {name}={value}")
-    return f"SET LOCAL {name} = {value};"
 
 
 class PsqlExplainRunner:
@@ -55,7 +49,7 @@ class PsqlExplainRunner:
         if not query:
             raise ValueError("query must not be empty")
 
-        set_sql = "\n".join(_quote_setting(k, v) for k, v in sorted(settings.items()))
+        set_sql = "\n".join(render_set_local(k, v) for k, v in sorted(settings.items()))
         options = ["FORMAT JSON", "SETTINGS", "SUMMARY"]
         if analyze:
             options.extend(["ANALYZE", "BUFFERS", "TIMING OFF"])
