@@ -8,6 +8,7 @@ from dataclasses import asdict
 from pathlib import Path
 from uuid import uuid4
 
+from aster.benchmarks.environment import capture_benchmark_environment
 from aster.candidates import CandidateCollector, default_candidates, research_candidates
 from aster.integration import PsqlExplainRunner
 from aster.workloads import (
@@ -43,6 +44,24 @@ def _load_preflight(path: Path) -> dict:
     return payload
 
 
+def _bind_environment(output_dir: Path, environment) -> None:
+    path = output_dir / "environment.json"
+    payload = environment.to_jsonable()
+    if path.exists():
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise SystemExit(f"invalid existing environment manifest {path}: {exc}") from exc
+        if existing.get("environment_sha256") != environment.environment_sha256:
+            raise SystemExit(
+                "collection output directory belongs to another benchmark environment: "
+                f"existing={existing.get('environment_sha256')} current={environment.environment_sha256}"
+            )
+        return
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Collect measured candidate plans for TPC-H")
     parser.add_argument("--query-dir", type=Path, required=True)
@@ -73,6 +92,9 @@ def main(argv=None) -> int:
             f"expected {preflight['workload_sha256'][:12]}, got {current_workload.workload_sha256[:12]}"
         )
 
+    runner = PsqlExplainRunner(dsn, timeout_s=args.timeout)
+    environment = capture_benchmark_environment(runner)
+    _bind_environment(args.output_dir, environment)
     experiment_id = args.experiment_id or str(uuid4())
     config = TpchCollectionConfig(
         experiment_id=experiment_id,
@@ -83,10 +105,10 @@ def main(argv=None) -> int:
         scale_factor=preflight["scale_factor"],
         run_seed=args.seed,
         code_revision=_revision(),
+        environment_sha256=environment.environment_sha256,
         warmups=args.warmups,
         repetitions=args.repetitions,
     )
-    runner = PsqlExplainRunner(dsn, timeout_s=args.timeout)
     collector = CandidateCollector(runner)
     candidates = research_candidates() if args.candidate_set == "research" else default_candidates()
     summary = collect_tpch_workload(
@@ -103,6 +125,7 @@ def main(argv=None) -> int:
         "experiment_id": experiment_id,
         "dataset_version": config.dataset_version,
         "benchmark_input_sha256": config.benchmark_input_sha256,
+        "environment_sha256": config.environment_sha256,
         "candidate_set": args.candidate_set,
         "summary": asdict(summary),
     }
