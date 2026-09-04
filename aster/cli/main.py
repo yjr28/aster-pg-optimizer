@@ -22,6 +22,7 @@ from aster.experiments import (
     evaluate_ranking,
     fallback_pareto_sweep,
     parameter_holdout,
+    query_holdout,
     template_holdout,
     workload_holdout,
 )
@@ -73,20 +74,58 @@ def _training_split(examples, args):
     )
 
 
+def _calibration_diagnostics(model, examples):
+    if not examples or model.calibrator is None:
+        return {"enabled":False,"examples":0}
+    covered=0; relative_widths=[]
+    for example in examples:
+        prediction=model.predict(example.plan)
+        assert prediction.interval_lower_ms is not None and prediction.interval_upper_ms is not None
+        covered += int(prediction.interval_lower_ms <= example.runtime_ms <= prediction.interval_upper_ms)
+        relative_widths.append((prediction.interval_upper_ms-prediction.interval_lower_ms)/example.runtime_ms)
+    calibrator=model.calibrator
+    return {
+        "enabled":True,
+        "examples":len(examples),
+        "alpha":calibrator.alpha,
+        "target_coverage":calibrator.target_coverage,
+        "empirical_calibration_coverage":covered/len(examples),
+        "quantile":calibrator.quantile,
+        "min_log_scale":calibrator.min_log_scale,
+        "mean_relative_interval_width":sum(relative_widths)/len(relative_widths),
+    }
+
+
 def cmd_train(args):
     integrity = audit_dataset(args.dataset)
     if not integrity.ok: raise SystemExit("dataset integrity audit failed:\n- " + "\n- ".join(integrity.errors))
+    if not 0 <= args.calibration_fraction < 1:
+        raise SystemExit("calibration_fraction must be in [0, 1)")
     examples = load_training_examples(args.dataset); split = _training_split(examples,args)
-    train,test=list(split.train),list(split.test)
+    primary_train,test=list(split.train),list(split.test)
+    if args.calibration_fraction > 0:
+        calibration_split=query_holdout(
+            primary_train,
+            test_fraction=args.calibration_fraction,
+            seed=args.seed+101,
+        )
+        train=list(calibration_split.train); calibration=list(calibration_split.test)
+        calibration_groups=sorted(calibration_split.test_groups)
+    else:
+        train=primary_train; calibration=[]; calibration_groups=[]
+
     postgres_cost=PostgresCostRanker()
     ridge=RidgeRuntimeModel(alpha=args.ridge_alpha).fit(train)
     normalized=QueryNormalizedRidgeModel(alpha=args.ridge_alpha).fit(train)
     pairwise=PairwiseLogisticRanker(c=args.pairwise_c,seed=args.seed).fit(train)
     model=RuntimeEnsemble(trees=args.trees,seed=args.seed,min_samples_leaf=args.min_samples_leaf).fit(train)
+    if calibration:
+        model.calibrate(calibration,alpha=args.conformal_alpha,min_log_scale=args.min_log_scale)
     metadata={"model":"random_forest_runtime_baseline","seed":args.seed,"dataset":str(args.dataset),"dataset_integrity":asdict(integrity),
               "split_regime":args.split_regime,"test_fraction":args.test_fraction,
-              "train_examples":len(train),"test_examples":len(test),
-              "train_groups":sorted(split.train_groups),"test_groups":sorted(split.test_groups),
+              "primary_train_examples":len(primary_train),"fit_examples":len(train),"calibration_examples":len(calibration),"test_examples":len(test),
+              "train_groups":sorted(split.train_groups),"test_groups":sorted(split.test_groups),"calibration_query_groups":calibration_groups,
+              "calibration":_calibration_diagnostics(model,calibration),
               "objective_metadata":{"pairwise_training_pairs":pairwise.training_pairs},
               "baseline_metrics":{"postgres_estimated_cost":asdict(evaluate_ranking(postgres_cost,test)),
                                   "ridge_log_runtime":asdict(evaluate_ranking(ridge,test)),
@@ -112,6 +151,21 @@ def _decision(runner, query, model, args):
     return collector, discovered, decision, selection_overhead_ms
 
 
+def _prediction_json(ranked):
+    prediction=ranked.prediction
+    return {
+        "candidate":ranked.candidate.spec.candidate_id,
+        "runtime_ms":prediction.runtime_ms,
+        "log_std":prediction.log_std,
+        "interval_lower_ms":prediction.interval_lower_ms,
+        "interval_upper_ms":prediction.interval_upper_ms,
+        "calibrated_log_radius":prediction.calibrated_log_radius,
+        "domain_distance":prediction.domain_distance,
+        "outside_training_range_count":prediction.outside_training_range_count,
+        "unseen_structural_features":list(prediction.unseen_structural_features),
+    }
+
+
 def cmd_optimize(args):
     runner=_runner(args); query=read_query(args.sql_file); model=load_model(args.model)
     collector,discovered,decision,_selection_overhead_ms=_decision(runner,query,model,args)
@@ -122,9 +176,7 @@ def cmd_optimize(args):
     result={"selected_candidate":decision.selected.spec.candidate_id,"selected_settings":decision.selected.spec.settings,
             "fallback":decision.fallback,"reason":decision.reason,"decision_overhead_ms":decision.decision_overhead_ms,
             "measured_execution_ms":[o.execution_time_ms for o in measured],"unique_candidates":len(discovered),
-            "predictions":[{"candidate":x.candidate.spec.candidate_id,"runtime_ms":x.prediction.runtime_ms,"log_std":x.prediction.log_std,
-                            "domain_distance":x.prediction.domain_distance,"outside_training_range_count":x.prediction.outside_training_range_count,
-                            "unseen_structural_features":list(x.prediction.unseen_structural_features)} for x in decision.ranked]}
+            "predictions":[_prediction_json(x) for x in decision.ranked]}
     print(json.dumps(result,indent=2,sort_keys=True)); return 0
 
 
@@ -148,6 +200,7 @@ def cmd_benchmark(args):
         "fallback_reason":decision.reason,
         "ranking_only_overhead_ms":decision.decision_overhead_ms,
         "selection_overhead_ms":selection_overhead_ms,
+        "predictions":[_prediction_json(x) for x in decision.ranked],
         "benchmark":benchmark.to_jsonable(),
     }
     encoded=json.dumps(payload,indent=2,sort_keys=True)
@@ -175,6 +228,7 @@ def build_parser():
     collect=sub.add_parser("collect"); db_args(collect); collect.add_argument("--out",type=Path,required=True); collect.add_argument("--code-revision"); collect.set_defaults(func=cmd_collect)
     train=sub.add_parser("train"); train.add_argument("--dataset",type=Path,required=True); train.add_argument("--model-out",type=Path,required=True)
     train.add_argument("--test-fraction",type=float,default=.2); train.add_argument("--split-regime",choices=("template","parameter","workload"),default="template")
+    train.add_argument("--calibration-fraction",type=float,default=.15); train.add_argument("--conformal-alpha",type=float,default=.10); train.add_argument("--min-log-scale",type=float,default=.05)
     train.add_argument("--seed",type=int,default=7); train.add_argument("--trees",type=int,default=128)
     train.add_argument("--min-samples-leaf",type=int,default=2); train.add_argument("--ridge-alpha",type=float,default=1.0); train.add_argument("--pairwise-c",type=float,default=1.0); train.set_defaults(func=cmd_train)
     audit=sub.add_parser("audit-dataset"); audit.add_argument("--dataset",type=Path,required=True); audit.set_defaults(func=cmd_audit_dataset)
