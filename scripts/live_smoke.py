@@ -34,6 +34,14 @@ obs = collector.measure(
 )
 assert obs[0].execution_time_ms > 0
 
+# Exercise the non-boolean research setting boundary against the real PostgreSQL server.
+geqo_plan = runner.explain(
+    QUERY,
+    {"geqo": "on", "geqo_threshold": "2", "geqo_seed": "0.60", "geqo_effort": "10"},
+    analyze=False,
+)
+assert isinstance(geqo_plan, list) and geqo_plan
+
 native = next(candidate for candidate in discovered if candidate.spec.candidate_id == "native")
 alternative = next(candidate for candidate in discovered if candidate is not native)
 paired = run_paired_benchmark(
@@ -53,4 +61,5 @@ print({
     "unique_plans": len(discovered),
     "execution_ms": obs[0].execution_time_ms,
     "paired_speedup": paired.execution_speedup_geomean,
+    "geqo_settings_live": True,
 })
