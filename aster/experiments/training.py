@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 
 from aster.models import (
+    MLPRuntimeModel,
     PairwiseLogisticRanker,
     PostgresCostRanker,
     QueryNormalizedRidgeModel,
@@ -27,6 +28,9 @@ class TrainingProtocol:
     min_samples_leaf: int = 2
     ridge_alpha: float = 1.0
     pairwise_c: float = 1.0
+    mlp_hidden_layer_sizes: tuple[int, ...] = (64, 32)
+    mlp_alpha: float = 1e-4
+    mlp_max_iter: int = 500
 
     def __post_init__(self) -> None:
         if self.split_regime not in {"template", "parameter", "workload"}:
@@ -39,6 +43,12 @@ class TrainingProtocol:
             raise ValueError("conformal_alpha must be between 0 and 1")
         if self.min_log_scale <= 0:
             raise ValueError("min_log_scale must be positive")
+        if not self.mlp_hidden_layer_sizes or any(width < 1 for width in self.mlp_hidden_layer_sizes):
+            raise ValueError("mlp_hidden_layer_sizes must contain positive widths")
+        if self.mlp_alpha < 0:
+            raise ValueError("mlp_alpha must be non-negative")
+        if self.mlp_max_iter < 1:
+            raise ValueError("mlp_max_iter must be positive")
 
 
 @dataclass(frozen=True)
@@ -129,6 +139,12 @@ def run_training_experiment(
     ridge = RidgeRuntimeModel(alpha=protocol.ridge_alpha).fit(fit_examples)
     normalized = QueryNormalizedRidgeModel(alpha=protocol.ridge_alpha).fit(fit_examples)
     pairwise = PairwiseLogisticRanker(c=protocol.pairwise_c, seed=protocol.seed).fit(fit_examples)
+    mlp = MLPRuntimeModel(
+        hidden_layer_sizes=protocol.mlp_hidden_layer_sizes,
+        alpha=protocol.mlp_alpha,
+        seed=protocol.seed,
+        max_iter=protocol.mlp_max_iter,
+    ).fit(fit_examples)
     model = RuntimeEnsemble(
         trees=protocol.trees,
         seed=protocol.seed,
@@ -163,6 +179,7 @@ def run_training_experiment(
         "ridge_log_runtime": asdict(evaluate_ranking(ridge, test)),
         "ridge_query_normalized_runtime": asdict(evaluate_ranking(normalized, test)),
         "pairwise_logistic_ranking": asdict(evaluate_ranking(pairwise, test)),
+        "mlp_log_runtime": asdict(evaluate_ranking(mlp, test)),
         "random_forest_runtime": asdict(evaluate_ranking(model, test)),
     }
     fallback_metrics = asdict(evaluate_fallback_policy(model, test))
@@ -185,7 +202,12 @@ def run_training_experiment(
         calibration_query_groups=calibration_groups,
         calibration=calibration_metadata,
         test_intervals=_interval_diagnostics(model, test),
-        objective_metadata={"pairwise_training_pairs": pairwise.training_pairs},
+        objective_metadata={
+            "pairwise_training_pairs": pairwise.training_pairs,
+            "mlp_hidden_layer_sizes": list(protocol.mlp_hidden_layer_sizes),
+            "mlp_alpha": protocol.mlp_alpha,
+            "mlp_max_iter": protocol.mlp_max_iter,
+        },
         baseline_metrics=baseline_metrics,
         fallback_metrics=fallback_metrics,
         fallback_pareto=pareto,
