@@ -11,6 +11,7 @@ from .robustness import RobustnessMatrix, RobustnessRegimeResult, run_robustness
 from .split import (
     HoldoutSplit,
     dataset_version_holdout,
+    environment_holdout,
     parameter_holdout,
     query_holdout,
     relation_holdout,
@@ -29,6 +30,7 @@ __all__ = [
     "TrainingExperimentResult",
     "TrainingProtocol",
     "dataset_version_holdout",
+    "environment_holdout",
     "evaluate_fallback_policy",
     "evaluate_ranking",
     "evaluate_runtime_ranking",
