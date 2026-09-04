@@ -118,3 +118,37 @@ def workload_holdout(
     train = tuple(e for e in examples if str(e.workload) in train_groups)
     test = tuple(e for e in examples if str(e.workload) in test_groups)
     return HoldoutSplit(train, test, train_groups, test_groups)
+
+
+def query_holdout(
+    examples: list[TrainingExample],
+    *,
+    test_fraction: float = 0.15,
+    seed: int = 17,
+) -> HoldoutSplit:
+    """Split whole query candidate sets for calibration or secondary evaluation.
+
+    The group identity includes dataset/workload/query_id so equal query IDs from
+    unrelated corpora cannot collide. Every physical-plan candidate for a query stays
+    on one side of the split.
+    """
+    if not 0 < test_fraction < 1:
+        raise ValueError("test_fraction must be between 0 and 1")
+    groups = sorted({
+        f"{e.dataset_version or ''}::{e.workload or ''}::{e.query_id}"
+        for e in examples
+    })
+    if len(groups) < 2:
+        raise ValueError("at least two query groups are required")
+    rng = random.Random(seed)
+    rng.shuffle(groups)
+    count = _test_count(len(groups), test_fraction)
+    test_groups = frozenset(groups[:count])
+    train_groups = frozenset(groups[count:])
+
+    def key(example: TrainingExample) -> str:
+        return f"{example.dataset_version or ''}::{example.workload or ''}::{example.query_id}"
+
+    train = tuple(example for example in examples if key(example) in train_groups)
+    test = tuple(example for example in examples if key(example) in test_groups)
+    return HoldoutSplit(train, test, train_groups, test_groups)
