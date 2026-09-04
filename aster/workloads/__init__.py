@@ -1,3 +1,9 @@
+from .imdb import (
+    EXPECTED_IMDB_TABLES,
+    DatasetFile,
+    ImdbDatasetManifest,
+    build_imdb_manifest,
+)
 from .job import (
     EXPECTED_JOB_FAMILY_COUNT,
     EXPECTED_JOB_QUERY_COUNT,
@@ -8,6 +14,10 @@ from .job import (
 )
 
 __all__ = [
+    "EXPECTED_IMDB_TABLES",
+    "DatasetFile",
+    "ImdbDatasetManifest",
+    "build_imdb_manifest",
     "EXPECTED_JOB_FAMILY_COUNT",
     "EXPECTED_JOB_QUERY_COUNT",
     "JobQuery",
