@@ -8,7 +8,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from aster.artifacts import load_model
-from aster.benchmarks import JobBenchmarkConfig, benchmark_job_workload
+from aster.benchmarks import JobBenchmarkConfig, benchmark_job_workload, capture_benchmark_environment
 from aster.candidates import default_candidates, research_candidates
 from aster.integration import PsqlExplainRunner
 from aster.workloads import build_job_manifest, load_job_queries
@@ -37,6 +37,7 @@ def _resolve_identity(
     requested_experiment_id: str | None,
     benchmark_input_sha256: str,
     model_sha256: str,
+    environment_sha256: str,
     candidate_set: str,
 ) -> dict:
     path = output_dir / "benchmark_identity.json"
@@ -45,6 +46,7 @@ def _resolve_identity(
         expected = {
             "benchmark_input_sha256": benchmark_input_sha256,
             "model_sha256": model_sha256,
+            "environment_sha256": environment_sha256,
             "candidate_set": candidate_set,
         }
         for key, value in expected.items():
@@ -58,16 +60,29 @@ def _resolve_identity(
         return identity
 
     identity = {
-        "schema_version": 1,
+        "schema_version": 2,
         "experiment_id": requested_experiment_id or str(uuid4()),
         "benchmark_input_sha256": benchmark_input_sha256,
         "model_sha256": model_sha256,
+        "environment_sha256": environment_sha256,
         "candidate_set": candidate_set,
         "cache_policy": "paired-warm-cache",
     }
     output_dir.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(identity, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return identity
+
+
+def _persist_environment(output_dir: Path, environment) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / "benchmark_environment.json"
+    payload = environment.to_jsonable()
+    if path.exists():
+        existing = json.loads(path.read_text(encoding="utf-8"))
+        if existing.get("environment_sha256") != environment.environment_sha256:
+            raise SystemExit("benchmark output directory was captured under another environment")
+        return
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def main(argv=None) -> int:
@@ -105,12 +120,17 @@ def main(argv=None) -> int:
     if workload.workload_sha256 != preflight["workload_sha256"]:
         raise SystemExit("JOB query checkout no longer matches the preflight workload hash")
 
+    runner = PsqlExplainRunner(dsn, timeout_s=args.timeout)
+    environment = capture_benchmark_environment(runner)
+    _persist_environment(args.output_dir, environment)
+
     model_sha256 = _sha256_file(args.model)
     identity = _resolve_identity(
         args.output_dir,
         requested_experiment_id=args.experiment_id,
         benchmark_input_sha256=preflight["benchmark_input_sha256"],
         model_sha256=model_sha256,
+        environment_sha256=environment.environment_sha256,
         candidate_set=args.candidate_set,
     )
     model = load_model(args.model)
@@ -129,7 +149,7 @@ def main(argv=None) -> int:
         max_outside_features=args.max_outside_features,
     )
     result = benchmark_job_workload(
-        PsqlExplainRunner(dsn, timeout_s=args.timeout),
+        runner,
         model,
         load_job_queries(args.query_dir, strict=strict),
         specs,
@@ -139,6 +159,7 @@ def main(argv=None) -> int:
         fail_fast=args.fail_fast,
     )
     result["model_sha256"] = model_sha256
+    result["environment_sha256"] = environment.environment_sha256
     result["candidate_set"] = args.candidate_set
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0 if result["failed_queries"] == 0 else 2
