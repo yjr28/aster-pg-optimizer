@@ -28,6 +28,8 @@ aster collect \
   --out artifacts/demo.jsonl
 ```
 
+`aster collect` captures the current benchmark environment once, stamps its `environment_sha256` on every observation, and writes `artifacts/demo.jsonl.environment.json`. The environment fingerprint includes PostgreSQL catalog/settings/statistics/index state plus host properties. The demo remains a functional fixture, not performance evidence.
+
 ## Join Order Benchmark pipeline
 
 Aster intentionally does **not** vendor JOB SQL or IMDB data. Point it at your external benchmark query checkout and the corresponding 21-table CSV snapshot.
@@ -68,7 +70,9 @@ python scripts/job_collect.py \
   --experiment-id job-run-001
 ```
 
-Each query is written atomically to `queries/<query-id>.jsonl` only after all unique candidates for that query complete. Failed queries get a separate failure record and do not leave a completed shard. Re-running the same experiment resumes from validated shards.
+At run start, Aster captures `artifacts/job/run-001/environment.json`. The output directory is bound to that environment SHA: attempting to resume it against a different PostgreSQL/index/statistics/host state fails before completed shards are reused.
+
+Each query is written atomically to `queries/<query-id>.jsonl` only after all unique candidates for that query complete. Every observation carries the same environment SHA. Failed queries get a separate failure record and do not leave a completed shard.
 
 ### 4. Finalize only a complete, failure-free corpus
 
@@ -78,11 +82,11 @@ python scripts/job_finalize.py \
   --out artifacts/job/job-run-001.jsonl
 ```
 
-Finalization refuses unresolved failures, missing query shards, mixed experiment IDs, mixed dataset versions, non-JOB records, or any dataset-integrity error. The merged JSONL is published atomically only after the full integrity audit succeeds.
+Finalization refuses unresolved failures, missing query shards, mixed experiment IDs, mixed dataset versions, mixed environment fingerprints, non-JOB records, or any dataset-integrity error. The merged JSONL is published atomically only after the full integrity audit succeeds.
 
 ## TPC-H workload-shift pipeline
 
-TPC-H inputs are also external. Aster fingerprints executable SQL and the exact eight-table data snapshot rather than redistributing benchmark material. The current CLI default records specification version `3.0.1`; override it explicitly if using another approved specification.
+TPC-H inputs are also external. Aster fingerprints executable SQL and the exact eight-table data snapshot rather than redistributing benchmark material. Record the exact specification version used by your external query/data generator.
 
 ### 1. Freeze the TPC-H query/data inputs
 
@@ -95,7 +99,7 @@ python scripts/tpch_preflight.py \
   --out artifacts/tpch/preflight.json
 ```
 
-Strict mode requires 22 executable query files (`q1.sql` ... `q22.sql`, with an optional `q` prefix) and all eight base tables. `.tbl` and `.csv` data files are supported, but ambiguous duplicate formats for one table are rejected. The preflight identity binds query bytes, data bytes, declared scale factor, and specification version.
+Strict mode requires 22 executable query files and all eight base tables. `.tbl` and `.csv` data files are supported, but ambiguous duplicate formats for one table are rejected. The preflight identity binds query bytes, data bytes, declared scale factor, and specification version.
 
 ### 2. Collect and finalize with the same integrity semantics as JOB
 
@@ -114,9 +118,9 @@ python scripts/tpch_finalize.py \
   --out artifacts/tpch/tpch-run-001.jsonl
 ```
 
-TPC-H uses the same atomic per-query publication and final integrity audit as JOB. A partial or mixed-provenance run cannot be finalized.
+TPC-H uses the same environment binding, atomic per-query publication, resume validation, and final integrity audit as JOB. A partial or mixed-provenance run cannot be finalized.
 
-## Combine audited corpora for workload-shift experiments
+## Combine audited corpora for shift experiments
 
 ```bash
 python scripts/combine_datasets.py \
@@ -126,7 +130,9 @@ python scripts/combine_datasets.py \
   --require-multiple-workloads
 ```
 
-Every input must independently pass `audit_dataset`. The combiner rejects duplicate observation identities across corpora, writes atomically, re-audits the merged file, and emits an adjacent manifest containing each input SHA, workload, and dataset version.
+Every input must independently pass `audit_dataset`. The combiner records each input SHA, workload, dataset version, and environment fingerprint. Duplicate observation identity includes environment, so independently measured states are preserved instead of rejected or averaged. The combined file is written atomically and re-audited.
+
+The same path can combine separately collected baseline/stale-statistics/index-state/configuration runs, provided each run has its own environment fingerprint.
 
 ## Train and compare objectives
 
@@ -146,12 +152,19 @@ aster train \
 `--split-regime` supports:
 
 - `template`: entire query templates are unseen at test time;
-- `parameter`: parameterizations are held out within each known template, and all candidates for one parameterization stay together;
-- `workload`: entire named workloads are held out, intended for combined corpora such as JOB + TPC-H.
+- `parameter`: parameterizations are held out within each known template;
+- `workload`: complete workloads such as JOB or TPC-H are held out;
+- `dataset`: complete dataset snapshots/scales are held out;
+- `relation`: queries involving one relation are held out while that relation is absent from all training plans;
+- `environment`: complete benchmark-environment fingerprints are held out, intended for separately collected statistics/index/config/hardware shifts.
 
-The primary test split is created first. If conformal calibration is enabled, a second **query-group holdout is carved only from the training side**; the final test set is never used to fit the interval calibration. The saved metadata includes calibration target coverage, calibration-set coverage, held-out test coverage, interval width, split groups, and all ranking/fallback metrics.
+All candidate plans for a query/parameter/environment identity stay together.
 
-The same fit subset is used for PostgreSQL-cost comparison, absolute Ridge runtime, query-normalized Ridge, pairwise logistic ranking, and the random-forest runtime model so objective comparisons are not advantaged by different training data.
+The primary test split is created first. If conformal calibration is enabled, a second **query-group holdout is carved only from the training side**; the final test set is never used to fit interval calibration. Query grouping includes environment, dataset, workload, and query ID.
+
+The saved metadata includes calibration target coverage, calibration-set coverage, held-out test coverage, interval width, split groups/notes, and ranking/fallback metrics.
+
+The same fit subset is used for PostgreSQL estimated cost, absolute Ridge runtime, query-normalized Ridge, pairwise logistic ranking, flat MLP runtime, and random-forest runtime baselines. A future graph model must use this same protocol to make its added complexity comparable.
 
 ## Run the robustness matrix
 
@@ -161,9 +174,23 @@ python scripts/robustness_matrix.py \
   --out artifacts/experiments/robustness.json
 ```
 
-The matrix attempts template, parameter, and workload holdouts with one shared training protocol. A regime that the dataset cannot support is recorded as `unsupported_for_dataset` with the exact reason; it is not silently omitted.
+By default the matrix attempts `template`, `parameter`, `workload`, `dataset`, `relation`, and `environment` holdouts with one shared training protocol. A regime that the dataset cannot support is recorded as `unsupported_for_dataset` with the exact split-construction reason; it is not silently omitted. Model/training failures propagate as failures rather than being reclassified as unsupported data.
 
-These matrix results are labeled `offline_measured_plan_replay`: the candidate runtimes are real measured labels from collection, but this is not a live paired database benchmark. Live publication claims still require the benchmark path below.
+These matrix results are labeled `offline_measured_plan_replay`: the candidate runtimes are real measured labels from collection, but this is not a fresh randomized paired database benchmark. Live publication claims still require the benchmark path below.
+
+## Controlled database-state shift protocol
+
+Aster does not automatically mutate production or benchmark databases. To study stale statistics, index changes, planner configuration changes, or scale shifts:
+
+1. prepare each desired state on a disposable benchmark database;
+2. run the same JOB/TPC-H preflight for the unchanged workload/data identity as appropriate;
+3. collect into a **new output directory** so Aster captures a new `environment.json`;
+4. finalize each state independently;
+5. combine the finalized corpora;
+6. run `--split-regime environment` or the full robustness matrix;
+7. for publishable performance evidence, run randomized paired live benchmarks in each state.
+
+This separates state preparation from Aster's read-oriented measurement path and prevents an automated robustness script from silently dropping indexes or corrupting statistics.
 
 ## Optimize and execute
 
@@ -178,7 +205,7 @@ aster optimize \
   --dataset-version demo-v1
 ```
 
-Output includes selected planner settings, point runtime predictions, calibrated intervals when available, domain diagnostics, fallback reason, ranking overhead, and measured selected-plan executions.
+Output includes selected planner settings, point runtime predictions, calibrated intervals when available, domain diagnostics, fallback reason, ranking overhead, current environment SHA, and measured selected-plan executions.
 
 ## Paired live benchmark
 
@@ -197,7 +224,7 @@ aster benchmark \
 
 When Aster selects a different physical plan, each repetition executes native and Aster plans in randomized order and validates that neither plan fingerprint drifted. If fallback selects the native physical plan, the query executes once per repetition and the shared execution sample is used for both sides rather than pretending duplicate executions are independent.
 
-For full JOB runs, `scripts/job_benchmark.py` additionally captures and fingerprints host hardware and a read-only PostgreSQL catalog/settings snapshot. Resume is bound to the exact model SHA, benchmark-input SHA, environment SHA, and candidate-set identity.
+The single-query benchmark artifact embeds the full current benchmark-environment snapshot. Full JOB runs additionally bind resume to exact model SHA, benchmark-input SHA, environment SHA, and candidate-set identity.
 
 The benchmark artifact separates PostgreSQL execution/planning latency from Aster's full selection overhead and retains every raw paired sample. Calibrated prediction bounds and the exact fallback reason are retained per candidate for post-hoc risk auditing.
 
