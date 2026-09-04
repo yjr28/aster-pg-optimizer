@@ -1,4 +1,5 @@
 from .baselines import (
+    MLPRuntimeModel,
     PairwiseLogisticRanker,
     PlanScorer,
     PostgresCostRanker,
@@ -11,6 +12,7 @@ __all__ = [
     "PlanScorer",
     "PostgresCostRanker",
     "RidgeRuntimeModel",
+    "MLPRuntimeModel",
     "QueryNormalizedRidgeModel",
     "PairwiseLogisticRanker",
     "RuntimeEnsemble",
