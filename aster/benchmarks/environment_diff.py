@@ -72,6 +72,7 @@ class PerturbationValidation:
     observed_sections: tuple[str, ...]
     unexpected_sections: tuple[str, ...]
     missing_required_sections: tuple[str, ...]
+    unexplained_fingerprint_change: bool
 
     def to_jsonable(self) -> dict[str, Any]:
         return asdict(self)
@@ -87,7 +88,9 @@ def validate_perturbation(
 
     This is intentionally strict. A statistics-only experiment should not silently
     include an index/config/host change. Callers can explicitly widen the allowed set
-    when a perturbation legitimately changes more than one section.
+    when a perturbation legitimately changes more than one section. A changed
+    environment fingerprint with no modeled semantic change is rejected as unexplained
+    evidence drift rather than treated as a valid no-op perturbation.
     """
     allowed = frozenset(allowed_sections)
     required = frozenset(required_sections)
@@ -99,13 +102,15 @@ def validate_perturbation(
     observed = frozenset(diff.changed_sections)
     unexpected = tuple(sorted(observed - allowed))
     missing = tuple(sorted(required - observed))
+    unexplained_fingerprint_change = not diff.identical_fingerprint and not observed
     return PerturbationValidation(
-        valid=not unexpected and not missing,
+        valid=not unexpected and not missing and not unexplained_fingerprint_change,
         allowed_sections=tuple(sorted(allowed)),
         required_sections=tuple(sorted(required)),
         observed_sections=tuple(sorted(observed)),
         unexpected_sections=unexpected,
         missing_required_sections=missing,
+        unexplained_fingerprint_change=unexplained_fingerprint_change,
     )
 
 
