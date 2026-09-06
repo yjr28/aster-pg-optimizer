@@ -165,6 +165,17 @@ def _require_environment(payload: dict[str, Any], label: str) -> None:
     if not isinstance(host, dict) or not isinstance(postgres, dict):
         raise ValueError(f"{label} host/postgres environment sections must be objects")
 
+    missing_postgres = sorted(_MODELED_POSTGRES_KEYS - postgres.keys())
+    if missing_postgres:
+        raise ValueError(
+            f"{label} PostgreSQL snapshot missing modeled fields: {missing_postgres}"
+        )
+    if not isinstance(postgres["settings"], dict):
+        raise ValueError(f"{label} PostgreSQL settings section must be an object")
+    for section in ("relations", "indexes", "statistics_state", "statistics_targets"):
+        if not isinstance(postgres[section], list):
+            raise ValueError(f"{label} PostgreSQL {section} section must be a list")
+
     host_sha = _require_sha256(payload.get("host_sha256"), "host_sha256", label)
     postgres_sha = _require_sha256(payload.get("postgres_sha256"), "postgres_sha256", label)
     environment_sha = _require_sha256(
@@ -253,17 +264,16 @@ def compare_benchmark_environments(
     `captured_at_utc` is intentionally ignored. A different timestamp does not make a
     perturbation. Known fields that feed the environment fingerprint are diffed into
     interpretable categories; changed unknown PostgreSQL snapshot fields are retained
-    separately so perturbation validation can fail closed.
+    separately so perturbation validation can fail closed. Incomplete modeled snapshot
+    sections are rejected rather than treated as empty evidence.
     """
     _require_environment(before, "before")
     _require_environment(after, "after")
     before_pg = before["postgres"]
     after_pg = after["postgres"]
 
-    settings_before = before_pg.get("settings") or {}
-    settings_after = after_pg.get("settings") or {}
-    if not isinstance(settings_before, dict) or not isinstance(settings_after, dict):
-        raise ValueError("PostgreSQL settings sections must be objects")
+    settings_before = before_pg["settings"]
+    settings_after = after_pg["settings"]
 
     metadata_keys = (
         "server_version",
@@ -280,19 +290,19 @@ def compare_benchmark_environments(
         postgres_metadata_changes=_scalar_changes(before_pg, after_pg, keys=metadata_keys),
         settings_changes=_scalar_changes(settings_before, settings_after),
         relation_changes=_diff_keyed_rows(
-            before_pg.get("relations"), after_pg.get("relations"),
+            before_pg["relations"], after_pg["relations"],
             key_fields=("schema_name", "relation_name"), label="relations",
         ),
         index_changes=_diff_keyed_rows(
-            before_pg.get("indexes"), after_pg.get("indexes"),
+            before_pg["indexes"], after_pg["indexes"],
             key_fields=("schema_name", "table_name", "index_name"), label="indexes",
         ),
         statistics_state_changes=_diff_keyed_rows(
-            before_pg.get("statistics_state"), after_pg.get("statistics_state"),
+            before_pg["statistics_state"], after_pg["statistics_state"],
             key_fields=("schema_name", "relation_name"), label="statistics_state",
         ),
         statistics_target_changes=_diff_keyed_rows(
-            before_pg.get("statistics_targets"), after_pg.get("statistics_targets"),
+            before_pg["statistics_targets"], after_pg["statistics_targets"],
             key_fields=("schema_name", "relation_name", "column_name"), label="statistics_targets",
         ),
         unclassified_postgres_changes=_scalar_changes(

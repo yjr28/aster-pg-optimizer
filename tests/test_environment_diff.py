@@ -139,6 +139,55 @@ def test_environment_diff_rejects_tampered_component_fingerprints():
         compare_benchmark_environments(before,after)
 
 
+@pytest.mark.parametrize(
+    "missing_field",
+    (
+        "server_version",
+        "server_version_num",
+        "database",
+        "database_size_bytes",
+        "settings",
+        "relations",
+        "indexes",
+        "statistics_state",
+        "statistics_targets",
+    ),
+)
+def test_environment_diff_rejects_missing_modeled_postgres_evidence(missing_field):
+    before=_environment()
+    after=deepcopy(before)
+    del after["postgres"][missing_field]
+    _refresh_hashes(after)
+
+    with pytest.raises(
+        ValueError,
+        match=r"after PostgreSQL snapshot missing modeled fields",
+    ):
+        compare_benchmark_environments(before, after)
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid_value", "message"),
+    (
+        ("settings", [], "settings section must be an object"),
+        ("relations", {}, "relations section must be a list"),
+        ("indexes", {}, "indexes section must be a list"),
+        ("statistics_state", {}, "statistics_state section must be a list"),
+        ("statistics_targets", {}, "statistics_targets section must be a list"),
+    ),
+)
+def test_environment_diff_rejects_invalid_modeled_postgres_section_shapes(
+    field, invalid_value, message
+):
+    before=_environment()
+    after=deepcopy(before)
+    after["postgres"][field]=invalid_value
+    _refresh_hashes(after)
+
+    with pytest.raises(ValueError, match=message):
+        compare_benchmark_environments(before, after)
+
+
 def test_perturbation_validation_rejects_unclassified_postgres_change_with_allowed_change():
     before=_environment()
     after=deepcopy(before)
