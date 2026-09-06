@@ -73,6 +73,7 @@ def test_perturbation_validation_rejects_unexpected_confounders_and_requires_dec
     assert valid.valid
     assert valid.missing_required_sections == ()
     assert not valid.unexplained_fingerprint_change
+    assert not valid.fingerprint_evidence_mismatch
 
     statistics_only=validate_perturbation(
         diff,
@@ -81,6 +82,7 @@ def test_perturbation_validation_rejects_unexpected_confounders_and_requires_dec
     )
     assert not statistics_only.valid
     assert statistics_only.unexpected_sections == ("indexes","postgres_metadata","settings")
+    assert not statistics_only.fingerprint_evidence_mismatch
 
     no_statistics=compare_benchmark_environments(_environment("a"*64),_environment("a"*64))
     missing=validate_perturbation(
@@ -91,6 +93,7 @@ def test_perturbation_validation_rejects_unexpected_confounders_and_requires_dec
     assert not missing.valid
     assert missing.missing_required_sections == ("statistics_state",)
     assert not missing.unexplained_fingerprint_change
+    assert not missing.fingerprint_evidence_mismatch
 
     with pytest.raises(ValueError,match="subset"):
         validate_perturbation(
@@ -111,6 +114,7 @@ def test_perturbation_validation_rejects_unexplained_fingerprint_drift():
     assert validation.unexpected_sections == ()
     assert validation.missing_required_sections == ()
     assert validation.unexplained_fingerprint_change
+    assert not validation.fingerprint_evidence_mismatch
     assert validation.to_jsonable()["unexplained_fingerprint_change"] is True
 
 
@@ -137,6 +141,7 @@ def test_perturbation_validation_rejects_unclassified_postgres_change_with_allow
     assert validation.unexpected_sections == ()
     assert validation.missing_required_sections == ()
     assert validation.unexplained_fingerprint_change
+    assert not validation.fingerprint_evidence_mismatch
 
 
 def test_perturbation_validation_rejects_semantic_change_with_identical_fingerprint():
