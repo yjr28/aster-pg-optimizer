@@ -48,6 +48,7 @@ def test_environment_diff_classifies_semantic_database_changes():
     assert diff.postgres_metadata_changes["database_size_bytes"] == {"before":1000,"after":1200}
     assert len(diff.index_changes.removed) == 1
     assert len(diff.statistics_state_changes.changed) == 1
+    assert diff.unclassified_postgres_changes == {}
     assert set(diff.changed_sections) == {"postgres_metadata","settings","indexes","statistics_state"}
 
 
@@ -58,6 +59,7 @@ def test_environment_diff_ignores_capture_timestamp_when_fingerprint_is_same():
     diff=compare_benchmark_environments(before,after)
     assert diff.identical_fingerprint
     assert diff.changed_sections == ()
+    assert diff.unclassified_postgres_changes == {}
     assert diff.to_jsonable()["changed_sections"] == []
 
 
@@ -110,3 +112,28 @@ def test_perturbation_validation_rejects_unexplained_fingerprint_drift():
     assert validation.missing_required_sections == ()
     assert validation.unexplained_fingerprint_change
     assert validation.to_jsonable()["unexplained_fingerprint_change"] is True
+
+
+def test_perturbation_validation_rejects_unclassified_postgres_change_with_allowed_change():
+    before=_environment("a"*64)
+    after=deepcopy(before)
+    after["environment_sha256"]="b"*64
+    after["postgres"]["statistics_state"][0]["n_live_tup"]=250
+    after["postgres"]["extension_versions"]={"pg_stat_statements":"1.11"}
+
+    diff=compare_benchmark_environments(before,after)
+    assert diff.changed_sections == ("statistics_state",)
+    assert diff.unclassified_postgres_changes == {
+        "extension_versions":{"before":None,"after":{"pg_stat_statements":"1.11"}}
+    }
+
+    validation=validate_perturbation(
+        diff,
+        allowed_sections=("statistics_state",),
+        required_sections=("statistics_state",),
+    )
+    assert not validation.valid
+    assert validation.observed_sections == ("statistics_state",)
+    assert validation.unexpected_sections == ()
+    assert validation.missing_required_sections == ()
+    assert validation.unexplained_fingerprint_change
