@@ -53,6 +53,16 @@ _MODELED_POSTGRES_KEYS = frozenset({
     "statistics_targets",
 })
 
+_POSTGRES_TEXT_FIELDS = (
+    "server_version",
+    "server_version_num",
+    "database",
+)
+
+_POSTGRES_INT_FIELDS = (
+    "database_size_bytes",
+)
+
 
 @dataclass(frozen=True)
 class KeyedRowsDiff:
@@ -209,6 +219,13 @@ def _require_environment(payload: dict[str, Any], label: str) -> None:
         raise ValueError(
             f"{label} PostgreSQL snapshot missing modeled fields: {missing_postgres}"
         )
+    for field in _POSTGRES_TEXT_FIELDS:
+        if not isinstance(postgres[field], str) or postgres[field] == "":
+            raise ValueError(f"{label} PostgreSQL field {field} has invalid type or value")
+    for field in _POSTGRES_INT_FIELDS:
+        value = postgres[field]
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise ValueError(f"{label} PostgreSQL field {field} has invalid type or value")
     if not isinstance(postgres["settings"], dict):
         raise ValueError(f"{label} PostgreSQL settings section must be an object")
     for section in ("relations", "indexes", "statistics_state", "statistics_targets"):
