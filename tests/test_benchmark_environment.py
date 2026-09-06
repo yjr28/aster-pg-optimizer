@@ -1,3 +1,5 @@
+import pytest
+
 from aster.benchmarks.environment import (
     HostEnvironment,
     capture_benchmark_environment,
@@ -42,3 +44,11 @@ def test_environment_hash_changes_when_database_state_changes(monkeypatch):
     second=capture_benchmark_environment(FakeRunner({"database_size_bytes":124,"indexes":[]}))
     assert first.postgres_sha256 != second.postgres_sha256
     assert first.environment_sha256 != second.environment_sha256
+
+
+def test_environment_hash_rejects_non_json_catalog_evidence(monkeypatch):
+    monkeypatch.setattr("aster.benchmarks.environment.capture_host_environment", _host)
+    snapshot={"database_size_bytes":123,"captured_object":object()}
+
+    with pytest.raises(TypeError, match="JSON serializable"):
+        capture_benchmark_environment(FakeRunner(snapshot))

@@ -46,7 +46,6 @@ def _canonical_sha256(value: object) -> str:
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,
-        default=str,
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
