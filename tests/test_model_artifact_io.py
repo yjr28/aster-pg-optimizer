@@ -250,3 +250,30 @@ def test_save_model_syncs_backup_directory_entry_before_first_publish(
     save_model(path, RuntimeEnsemble(), {"version": "new"})
 
     assert events[0:2] == ["directory-fsync", "replace"]
+
+
+def test_save_model_removes_backup_before_final_directory_sync(tmp_path, monkeypatch):
+    path = tmp_path / "model.joblib"
+    path.write_bytes(b"published-model")
+    path.with_suffix(path.suffix + ".metadata.json").write_text(
+        '{"version": "old"}\n', encoding="utf-8"
+    )
+    backup_presence_at_sync: list[bool] = []
+
+    def write_new_model(model, target):
+        Path(target).write_bytes(b"complete-new-model")
+
+    original_directory_sync = model_io._fsync_directory
+
+    def record_directory_sync(directory):
+        backup_presence_at_sync.append(
+            any(Path(directory).glob(".model.joblib.backup.*.tmp"))
+        )
+        return original_directory_sync(directory)
+
+    monkeypatch.setattr(model_io.joblib, "dump", write_new_model)
+    monkeypatch.setattr(model_io, "_fsync_directory", record_directory_sync)
+
+    save_model(path, RuntimeEnsemble(), {"version": "new"})
+
+    assert backup_presence_at_sync == [True, False]
