@@ -77,6 +77,7 @@ class BenchmarkEnvironmentDiff:
     index_changes: KeyedRowsDiff
     statistics_state_changes: KeyedRowsDiff
     statistics_target_changes: KeyedRowsDiff
+    unclassified_host_changes: dict[str, dict[str, Any]]
     unclassified_postgres_changes: dict[str, dict[str, Any]]
 
     @property
@@ -131,9 +132,9 @@ def validate_perturbation(
     include an index/config/host change. Callers can explicitly widen the allowed set
     when a perturbation legitimately changes more than one section. A changed
     environment fingerprint with no modeled semantic change, or a change in an
-    unmodeled PostgreSQL snapshot field, is rejected as unexplained evidence drift.
-    Modeled semantic changes paired with an identical environment fingerprint are
-    also rejected because the semantic evidence contradicts the recorded identity.
+    unmodeled host/PostgreSQL snapshot field, is rejected as unexplained evidence
+    drift. Modeled semantic changes paired with an identical environment fingerprint
+    are also rejected because the semantic evidence contradicts the recorded identity.
     """
     allowed = frozenset(allowed_sections)
     required = frozenset(required_sections)
@@ -145,8 +146,10 @@ def validate_perturbation(
     observed = frozenset(diff.changed_sections)
     unexpected = tuple(sorted(observed - allowed))
     missing = tuple(sorted(required - observed))
-    unexplained_fingerprint_change = bool(diff.unclassified_postgres_changes) or (
-        not diff.identical_fingerprint and not observed
+    unexplained_fingerprint_change = (
+        bool(diff.unclassified_host_changes)
+        or bool(diff.unclassified_postgres_changes)
+        or (not diff.identical_fingerprint and not observed)
     )
     fingerprint_evidence_mismatch = diff.identical_fingerprint and bool(observed)
     return PerturbationValidation(
@@ -299,12 +302,14 @@ def compare_benchmark_environments(
 
     `captured_at_utc` is intentionally ignored. A different timestamp does not make a
     perturbation. Known fields that feed the environment fingerprint are diffed into
-    interpretable categories; changed unknown PostgreSQL snapshot fields are retained
-    separately so perturbation validation can fail closed. Incomplete modeled snapshot
-    sections are rejected rather than treated as empty evidence.
+    interpretable categories; changed unknown host/PostgreSQL snapshot fields are
+    retained separately so perturbation validation can fail closed. Incomplete modeled
+    snapshot sections are rejected rather than treated as empty evidence.
     """
     _require_environment(before, "before")
     _require_environment(after, "after")
+    before_host = before["host"]
+    after_host = after["host"]
     before_pg = before["postgres"]
     after_pg = after["postgres"]
 
@@ -317,12 +322,17 @@ def compare_benchmark_environments(
         "database",
         "database_size_bytes",
     )
-    unclassified_keys = (set(before_pg) | set(after_pg)) - _MODELED_POSTGRES_KEYS
+    unclassified_host_keys = (set(before_host) | set(after_host)) - _MODELED_HOST_KEYS
+    unclassified_postgres_keys = (set(before_pg) | set(after_pg)) - _MODELED_POSTGRES_KEYS
     return BenchmarkEnvironmentDiff(
         before_environment_sha256=before["environment_sha256"],
         after_environment_sha256=after["environment_sha256"],
         identical_fingerprint=before["environment_sha256"] == after["environment_sha256"],
-        host_changes=_scalar_changes(before["host"], after["host"]),
+        host_changes=_scalar_changes(
+            before_host,
+            after_host,
+            keys=_MODELED_HOST_KEYS,
+        ),
         postgres_metadata_changes=_scalar_changes(before_pg, after_pg, keys=metadata_keys),
         settings_changes=_scalar_changes(settings_before, settings_after),
         relation_changes=_diff_keyed_rows(
@@ -341,9 +351,14 @@ def compare_benchmark_environments(
             before_pg["statistics_targets"], after_pg["statistics_targets"],
             key_fields=("schema_name", "relation_name", "column_name"), label="statistics_targets",
         ),
+        unclassified_host_changes=_scalar_changes(
+            before_host,
+            after_host,
+            keys=unclassified_host_keys,
+        ),
         unclassified_postgres_changes=_scalar_changes(
             before_pg,
             after_pg,
-            keys=unclassified_keys,
+            keys=unclassified_postgres_keys,
         ),
     )
