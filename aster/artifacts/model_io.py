@@ -17,6 +17,14 @@ def _fsync_file(path: Path) -> None:
         os.fsync(handle.fileno())
 
 
+def _fsync_directory(path: Path) -> None:
+    directory_fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
 def save_model(path: str | Path, model: RuntimeEnsemble, metadata: dict[str, Any]) -> None:
     path = Path(path)
     metadata_path = path.with_suffix(path.suffix + ".metadata.json")
@@ -59,7 +67,9 @@ def save_model(path: str | Path, model: RuntimeEnsemble, metadata: dict[str, Any
                 os.replace(backup_model_path, path)
             else:
                 path.unlink(missing_ok=True)
+            _fsync_directory(path.parent)
             raise
+        _fsync_directory(path.parent)
     finally:
         staged_model_path.unlink(missing_ok=True)
         staged_metadata_path.unlink(missing_ok=True)
