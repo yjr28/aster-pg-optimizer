@@ -5,6 +5,7 @@ import json
 import os
 import platform
 import sys
+from copy import deepcopy
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -92,9 +93,10 @@ def capture_host_environment() -> HostEnvironment:
 
 def capture_benchmark_environment(runner: BenchmarkCatalogRunner) -> BenchmarkEnvironment:
     host = capture_host_environment()
-    postgres = runner.benchmark_catalog_snapshot()
-    if not isinstance(postgres, dict):
+    snapshot = runner.benchmark_catalog_snapshot()
+    if not isinstance(snapshot, dict):
         raise TypeError("benchmark_catalog_snapshot() must return a dictionary")
+    postgres = deepcopy(snapshot)
     host_payload = asdict(host)
     host_sha = _canonical_sha256(host_payload)
     postgres_sha = _canonical_sha256(postgres)

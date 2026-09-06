@@ -2,6 +2,7 @@ import pytest
 
 from aster.benchmarks.environment import (
     HostEnvironment,
+    _canonical_sha256,
     capture_benchmark_environment,
 )
 
@@ -61,3 +62,20 @@ def test_environment_hash_rejects_non_finite_catalog_evidence(monkeypatch, non_f
 
     with pytest.raises(ValueError, match="Out of range float values are not JSON compliant"):
         capture_benchmark_environment(FakeRunner(snapshot))
+
+
+def test_captured_postgres_evidence_is_isolated_from_runner_mutation(monkeypatch):
+    monkeypatch.setattr("aster.benchmarks.environment.capture_host_environment", _host)
+    snapshot={
+        "database_size_bytes":123,
+        "settings":{"work_mem":{"setting":"4096","unit":"kB"}},
+        "indexes":[],
+    }
+    environment=capture_benchmark_environment(FakeRunner(snapshot))
+
+    snapshot["database_size_bytes"]=999
+    snapshot["settings"]["work_mem"]["setting"]="65536"
+
+    assert environment.postgres["database_size_bytes"] == 123
+    assert environment.postgres["settings"]["work_mem"]["setting"] == "4096"
+    assert environment.postgres_sha256 == _canonical_sha256(environment.postgres)
