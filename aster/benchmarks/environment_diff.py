@@ -225,8 +225,8 @@ def _keyed_rows(
         if not isinstance(row, dict):
             raise ValueError(f"{label} rows must be objects")
         key = tuple(row.get(field) for field in key_fields)
-        if any(value is None for value in key):
-            raise ValueError(f"{label} row missing identity fields {key_fields}: {row}")
+        if any(not isinstance(value, str) or value == "" for value in key):
+            raise ValueError(f"{label} row has invalid identity fields {key_fields}: {row}")
         if key in keyed:
             raise ValueError(f"duplicate {label} identity {key}")
         keyed[key] = row

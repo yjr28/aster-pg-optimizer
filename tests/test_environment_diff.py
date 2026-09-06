@@ -188,6 +188,28 @@ def test_environment_diff_rejects_invalid_modeled_postgres_section_shapes(
         compare_benchmark_environments(before, after)
 
 
+@pytest.mark.parametrize(
+    ("section", "identity_field", "invalid_value"),
+    (
+        ("relations", "schema_name", None),
+        ("relations", "relation_name", 7),
+        ("indexes", "index_name", ""),
+        ("statistics_state", "relation_name", 7),
+        ("statistics_targets", "column_name", None),
+    ),
+)
+def test_environment_diff_rejects_invalid_catalog_row_identity(
+    section, identity_field, invalid_value
+):
+    before=_environment()
+    after=deepcopy(before)
+    after["postgres"][section][0][identity_field]=invalid_value
+    _refresh_hashes(after)
+
+    with pytest.raises(ValueError, match=r"row has invalid identity fields"):
+        compare_benchmark_environments(before, after)
+
+
 def test_perturbation_validation_rejects_unclassified_postgres_change_with_allowed_change():
     before=_environment()
     after=deepcopy(before)
