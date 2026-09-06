@@ -65,6 +65,39 @@ _POSTGRES_INT_FIELDS = (
 
 _SETTING_EVIDENCE_FIELDS = frozenset({"setting", "unit", "source"})
 
+_CATALOG_ROW_FIELDS = {
+    "relations": frozenset({
+        "schema_name",
+        "relation_name",
+        "relkind",
+        "relpersistence",
+        "estimated_rows",
+        "pages",
+    }),
+    "indexes": frozenset({
+        "schema_name",
+        "table_name",
+        "index_name",
+        "index_definition",
+    }),
+    "statistics_state": frozenset({
+        "schema_name",
+        "relation_name",
+        "n_live_tup",
+        "n_dead_tup",
+        "last_analyze",
+        "last_autoanalyze",
+        "analyze_count",
+        "autoanalyze_count",
+    }),
+    "statistics_targets": frozenset({
+        "schema_name",
+        "relation_name",
+        "column_name",
+        "statistics_target",
+    }),
+}
+
 
 @dataclass(frozen=True)
 class KeyedRowsDiff:
@@ -294,6 +327,7 @@ def _keyed_rows(
     rows: Any,
     *,
     key_fields: tuple[str, ...],
+    row_fields: frozenset[str],
     label: str,
 ) -> dict[tuple[Any, ...], dict[str, Any]]:
     if rows is None:
@@ -304,6 +338,10 @@ def _keyed_rows(
     for row in rows:
         if not isinstance(row, dict):
             raise ValueError(f"{label} rows must be objects")
+        if frozenset(row) != row_fields:
+            raise ValueError(
+                f"{label} row fields must be exactly {sorted(row_fields)}: {row}"
+            )
         key = tuple(row.get(field) for field in key_fields)
         if any(not isinstance(value, str) or value == "" for value in key):
             raise ValueError(f"{label} row has invalid identity fields {key_fields}: {row}")
@@ -318,10 +356,21 @@ def _diff_keyed_rows(
     after_rows: Any,
     *,
     key_fields: tuple[str, ...],
+    row_fields: frozenset[str],
     label: str,
 ) -> KeyedRowsDiff:
-    before = _keyed_rows(before_rows, key_fields=key_fields, label=f"before {label}")
-    after = _keyed_rows(after_rows, key_fields=key_fields, label=f"after {label}")
+    before = _keyed_rows(
+        before_rows,
+        key_fields=key_fields,
+        row_fields=row_fields,
+        label=f"before {label}",
+    )
+    after = _keyed_rows(
+        after_rows,
+        key_fields=key_fields,
+        row_fields=row_fields,
+        label=f"after {label}",
+    )
     added = tuple(after[key] for key in sorted(after.keys() - before.keys()))
     removed = tuple(before[key] for key in sorted(before.keys() - after.keys()))
     changed: list[dict[str, Any]] = []
@@ -378,19 +427,27 @@ def compare_benchmark_environments(
         settings_changes=_scalar_changes(settings_before, settings_after),
         relation_changes=_diff_keyed_rows(
             before_pg["relations"], after_pg["relations"],
-            key_fields=("schema_name", "relation_name"), label="relations",
+            key_fields=("schema_name", "relation_name"),
+            row_fields=_CATALOG_ROW_FIELDS["relations"],
+            label="relations",
         ),
         index_changes=_diff_keyed_rows(
             before_pg["indexes"], after_pg["indexes"],
-            key_fields=("schema_name", "table_name", "index_name"), label="indexes",
+            key_fields=("schema_name", "table_name", "index_name"),
+            row_fields=_CATALOG_ROW_FIELDS["indexes"],
+            label="indexes",
         ),
         statistics_state_changes=_diff_keyed_rows(
             before_pg["statistics_state"], after_pg["statistics_state"],
-            key_fields=("schema_name", "relation_name"), label="statistics_state",
+            key_fields=("schema_name", "relation_name"),
+            row_fields=_CATALOG_ROW_FIELDS["statistics_state"],
+            label="statistics_state",
         ),
         statistics_target_changes=_diff_keyed_rows(
             before_pg["statistics_targets"], after_pg["statistics_targets"],
-            key_fields=("schema_name", "relation_name", "column_name"), label="statistics_targets",
+            key_fields=("schema_name", "relation_name", "column_name"),
+            row_fields=_CATALOG_ROW_FIELDS["statistics_targets"],
+            label="statistics_targets",
         ),
         unclassified_host_changes=_scalar_changes(
             before_host,
