@@ -44,6 +44,16 @@ def _environment():
     }
 
 
+def _rehash_environment(environment):
+    environment["host_sha256"] = _canonical_sha256(environment["host"])
+    environment["postgres_sha256"] = _canonical_sha256(environment["postgres"])
+    environment["environment_sha256"] = _canonical_sha256({
+        "schema_version": 1,
+        "host_sha256": environment["host_sha256"],
+        "postgres_sha256": environment["postgres_sha256"],
+    })
+
+
 def test_environment_diff_requires_capture_timestamp_evidence():
     before = _environment()
     after = deepcopy(before)
@@ -69,4 +79,15 @@ def test_environment_diff_rejects_invalid_capture_timestamp_type(invalid_value):
     after["captured_at_utc"] = invalid_value
 
     with pytest.raises(ValueError, match=r"captured_at_utc must be a non-empty string"):
+        compare_benchmark_environments(before, after)
+
+
+@pytest.mark.parametrize("field", ("cpu_count", "memory_total_bytes"))
+def test_environment_diff_rejects_negative_host_capacity_evidence(field):
+    before = _environment()
+    after = deepcopy(before)
+    after["host"][field] = -1
+    _rehash_environment(after)
+
+    with pytest.raises(ValueError, match=rf"host field {field} has invalid type or value"):
         compare_benchmark_environments(before, after)
