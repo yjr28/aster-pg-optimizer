@@ -63,6 +63,8 @@ _POSTGRES_INT_FIELDS = (
     "database_size_bytes",
 )
 
+_SETTING_EVIDENCE_FIELDS = frozenset({"setting", "unit", "source"})
+
 
 @dataclass(frozen=True)
 class KeyedRowsDiff:
@@ -187,6 +189,27 @@ def _require_sha256(value: Any, field: str, label: str) -> str:
     return value.lower()
 
 
+def _require_settings(settings: dict[Any, Any], label: str) -> None:
+    for name, evidence in settings.items():
+        if not isinstance(name, str) or name == "":
+            raise ValueError(f"{label} PostgreSQL setting names must be non-empty strings")
+        if not isinstance(evidence, dict):
+            raise ValueError(f"{label} PostgreSQL setting {name} evidence must be an object")
+        fields = frozenset(evidence)
+        if fields != _SETTING_EVIDENCE_FIELDS:
+            raise ValueError(
+                f"{label} PostgreSQL setting {name} evidence fields must be exactly "
+                f"{sorted(_SETTING_EVIDENCE_FIELDS)}"
+            )
+        if not isinstance(evidence["setting"], str):
+            raise ValueError(f"{label} PostgreSQL setting {name} field setting has invalid type")
+        unit = evidence["unit"]
+        if unit is not None and not isinstance(unit, str):
+            raise ValueError(f"{label} PostgreSQL setting {name} field unit has invalid type")
+        if not isinstance(evidence["source"], str):
+            raise ValueError(f"{label} PostgreSQL setting {name} field source has invalid type")
+
+
 def _require_environment(payload: dict[str, Any], label: str) -> None:
     required = {
         "host",
@@ -228,6 +251,7 @@ def _require_environment(payload: dict[str, Any], label: str) -> None:
             raise ValueError(f"{label} PostgreSQL field {field} has invalid type or value")
     if not isinstance(postgres["settings"], dict):
         raise ValueError(f"{label} PostgreSQL settings section must be an object")
+    _require_settings(postgres["settings"], label)
     for section in ("relations", "indexes", "statistics_state", "statistics_targets"):
         if not isinstance(postgres[section], list):
             raise ValueError(f"{label} PostgreSQL {section} section must be a list")
