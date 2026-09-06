@@ -17,6 +17,15 @@ ENVIRONMENT_DIFF_SECTIONS = frozenset({
     "statistics_targets",
 })
 
+_ENVIRONMENT_FIELDS = frozenset({
+    "captured_at_utc",
+    "host",
+    "postgres",
+    "host_sha256",
+    "postgres_sha256",
+    "environment_sha256",
+})
+
 _MODELED_HOST_KEYS = frozenset({
     "system",
     "release",
@@ -267,18 +276,18 @@ def _require_settings(settings: dict[Any, Any], label: str) -> None:
 
 
 def _require_environment(payload: dict[str, Any], label: str) -> None:
-    required = {
-        "host",
-        "postgres",
-        "host_sha256",
-        "postgres_sha256",
-        "environment_sha256",
-    }
-    missing = sorted(required - payload.keys())
-    if missing:
-        raise ValueError(f"{label} environment missing fields: {missing}")
-    host = payload.get("host")
-    postgres = payload.get("postgres")
+    if not isinstance(payload, dict):
+        raise ValueError(f"{label} environment must be an object")
+    fields = frozenset(payload)
+    if fields != _ENVIRONMENT_FIELDS:
+        raise ValueError(
+            f"{label} environment fields must be exactly {sorted(_ENVIRONMENT_FIELDS)}"
+        )
+    captured_at = payload["captured_at_utc"]
+    if not isinstance(captured_at, str) or captured_at == "":
+        raise ValueError(f"{label} captured_at_utc must be a non-empty string")
+    host = payload["host"]
+    postgres = payload["postgres"]
     if not isinstance(host, dict) or not isinstance(postgres, dict):
         raise ValueError(f"{label} host/postgres environment sections must be objects")
 
@@ -441,7 +450,8 @@ def compare_benchmark_environments(
 ) -> BenchmarkEnvironmentDiff:
     """Compare two captured benchmark environments by research-relevant semantics.
 
-    `captured_at_utc` is intentionally ignored. A different timestamp does not make a
+    `captured_at_utc` is intentionally ignored after validating that the capture artifact
+    retains the fixed top-level schema. A different timestamp does not make a
     perturbation. Known fields that feed the environment fingerprint are diffed into
     interpretable categories; changed unknown host/PostgreSQL snapshot fields are
     retained separately so perturbation validation can fail closed. Incomplete modeled
