@@ -58,6 +58,7 @@ def save_model(path: str | Path, model: RuntimeEnsemble, metadata: dict[str, Any
             backup_model_path = Path(backup_model_name)
             shutil.copyfile(path, backup_model_path)
             _fsync_file(backup_model_path)
+            _fsync_directory(path.parent)
 
         os.replace(staged_model_path, path)
         try:
