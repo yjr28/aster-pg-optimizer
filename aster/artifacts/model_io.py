@@ -12,6 +12,11 @@ import joblib
 from aster.models import RuntimeEnsemble
 
 
+def _fsync_file(path: Path) -> None:
+    with path.open("rb") as handle:
+        os.fsync(handle.fileno())
+
+
 def save_model(path: str | Path, model: RuntimeEnsemble, metadata: dict[str, Any]) -> None:
     path = Path(path)
     metadata_path = path.with_suffix(path.suffix + ".metadata.json")
@@ -33,6 +38,8 @@ def save_model(path: str | Path, model: RuntimeEnsemble, metadata: dict[str, Any
     try:
         staged_metadata_path.write_text(metadata_text, encoding="utf-8")
         joblib.dump(model, staged_model_path)
+        _fsync_file(staged_metadata_path)
+        _fsync_file(staged_model_path)
 
         had_published_model = path.exists()
         if had_published_model:
