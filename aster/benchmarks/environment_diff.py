@@ -14,6 +14,18 @@ ENVIRONMENT_DIFF_SECTIONS = frozenset({
     "statistics_targets",
 })
 
+_MODELED_POSTGRES_KEYS = frozenset({
+    "server_version",
+    "server_version_num",
+    "database",
+    "database_size_bytes",
+    "settings",
+    "relations",
+    "indexes",
+    "statistics_state",
+    "statistics_targets",
+})
+
 
 @dataclass(frozen=True)
 class KeyedRowsDiff:
@@ -38,6 +50,7 @@ class BenchmarkEnvironmentDiff:
     index_changes: KeyedRowsDiff
     statistics_state_changes: KeyedRowsDiff
     statistics_target_changes: KeyedRowsDiff
+    unclassified_postgres_changes: dict[str, dict[str, Any]]
 
     @property
     def changed_sections(self) -> tuple[str, ...]:
@@ -89,8 +102,8 @@ def validate_perturbation(
     This is intentionally strict. A statistics-only experiment should not silently
     include an index/config/host change. Callers can explicitly widen the allowed set
     when a perturbation legitimately changes more than one section. A changed
-    environment fingerprint with no modeled semantic change is rejected as unexplained
-    evidence drift rather than treated as a valid no-op perturbation.
+    environment fingerprint with no modeled semantic change, or a change in an
+    unmodeled PostgreSQL snapshot field, is rejected as unexplained evidence drift.
     """
     allowed = frozenset(allowed_sections)
     required = frozenset(required_sections)
@@ -102,7 +115,9 @@ def validate_perturbation(
     observed = frozenset(diff.changed_sections)
     unexpected = tuple(sorted(observed - allowed))
     missing = tuple(sorted(required - observed))
-    unexplained_fingerprint_change = not diff.identical_fingerprint and not observed
+    unexplained_fingerprint_change = bool(diff.unclassified_postgres_changes) or (
+        not diff.identical_fingerprint and not observed
+    )
     return PerturbationValidation(
         valid=not unexpected and not missing and not unexplained_fingerprint_change,
         allowed_sections=tuple(sorted(allowed)),
@@ -189,8 +204,9 @@ def compare_benchmark_environments(
     """Compare two captured benchmark environments by research-relevant semantics.
 
     `captured_at_utc` is intentionally ignored. A different timestamp does not make a
-    perturbation. All fields that feed the environment fingerprint are represented by
-    host/postgres sections and are diffed into interpretable categories.
+    perturbation. Known fields that feed the environment fingerprint are diffed into
+    interpretable categories; changed unknown PostgreSQL snapshot fields are retained
+    separately so perturbation validation can fail closed.
     """
     _require_environment(before, "before")
     _require_environment(after, "after")
@@ -208,6 +224,7 @@ def compare_benchmark_environments(
         "database",
         "database_size_bytes",
     )
+    unclassified_keys = (set(before_pg) | set(after_pg)) - _MODELED_POSTGRES_KEYS
     return BenchmarkEnvironmentDiff(
         before_environment_sha256=before["environment_sha256"],
         after_environment_sha256=after["environment_sha256"],
@@ -230,5 +247,10 @@ def compare_benchmark_environments(
         statistics_target_changes=_diff_keyed_rows(
             before_pg.get("statistics_targets"), after_pg.get("statistics_targets"),
             key_fields=("schema_name", "relation_name", "column_name"), label="statistics_targets",
+        ),
+        unclassified_postgres_changes=_scalar_changes(
+            before_pg,
+            after_pg,
+            keys=unclassified_keys,
         ),
     )
