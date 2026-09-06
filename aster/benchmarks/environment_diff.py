@@ -27,6 +27,20 @@ _MODELED_HOST_KEYS = frozenset({
     "python_version",
 })
 
+_HOST_TEXT_FIELDS = (
+    "system",
+    "release",
+    "machine",
+    "platform",
+    "cpu_model",
+    "python_version",
+)
+
+_HOST_OPTIONAL_INT_FIELDS = (
+    "cpu_count",
+    "memory_total_bytes",
+)
+
 _MODELED_POSTGRES_KEYS = frozenset({
     "server_version",
     "server_version_num",
@@ -179,6 +193,13 @@ def _require_environment(payload: dict[str, Any], label: str) -> None:
     missing_host = sorted(_MODELED_HOST_KEYS - host.keys())
     if missing_host:
         raise ValueError(f"{label} host snapshot missing modeled fields: {missing_host}")
+    for field in _HOST_TEXT_FIELDS:
+        if not isinstance(host[field], str):
+            raise ValueError(f"{label} host field {field} has invalid type")
+    for field in _HOST_OPTIONAL_INT_FIELDS:
+        value = host[field]
+        if value is not None and (not isinstance(value, int) or isinstance(value, bool)):
+            raise ValueError(f"{label} host field {field} has invalid type")
 
     missing_postgres = sorted(_MODELED_POSTGRES_KEYS - postgres.keys())
     if missing_postgres:
