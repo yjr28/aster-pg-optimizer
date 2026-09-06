@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any, Iterable
 
+from .environment import _canonical_sha256
+
 
 ENVIRONMENT_DIFF_SECTIONS = frozenset({
     "host",
@@ -139,16 +141,51 @@ def validate_perturbation(
     )
 
 
+def _require_sha256(value: Any, field: str, label: str) -> str:
+    if not isinstance(value, str) or len(value) != 64 or any(
+        c not in "0123456789abcdef" for c in value.lower()
+    ):
+        raise ValueError(f"{label} {field} must be a SHA-256 hex string")
+    return value.lower()
+
+
 def _require_environment(payload: dict[str, Any], label: str) -> None:
-    required = {"host", "postgres", "environment_sha256"}
+    required = {
+        "host",
+        "postgres",
+        "host_sha256",
+        "postgres_sha256",
+        "environment_sha256",
+    }
     missing = sorted(required - payload.keys())
     if missing:
         raise ValueError(f"{label} environment missing fields: {missing}")
-    sha = payload.get("environment_sha256")
-    if not isinstance(sha, str) or len(sha) != 64 or any(c not in "0123456789abcdef" for c in sha.lower()):
-        raise ValueError(f"{label} environment_sha256 must be a SHA-256 hex string")
-    if not isinstance(payload.get("host"), dict) or not isinstance(payload.get("postgres"), dict):
+    host = payload.get("host")
+    postgres = payload.get("postgres")
+    if not isinstance(host, dict) or not isinstance(postgres, dict):
         raise ValueError(f"{label} host/postgres environment sections must be objects")
+
+    host_sha = _require_sha256(payload.get("host_sha256"), "host_sha256", label)
+    postgres_sha = _require_sha256(payload.get("postgres_sha256"), "postgres_sha256", label)
+    environment_sha = _require_sha256(
+        payload.get("environment_sha256"), "environment_sha256", label
+    )
+
+    expected_host_sha = _canonical_sha256(host)
+    expected_postgres_sha = _canonical_sha256(postgres)
+    expected_environment_sha = _canonical_sha256({
+        "schema_version": 1,
+        "host_sha256": expected_host_sha,
+        "postgres_sha256": expected_postgres_sha,
+    })
+    if host_sha != expected_host_sha:
+        raise ValueError(f"{label} host_sha256 does not match host payload")
+    if postgres_sha != expected_postgres_sha:
+        raise ValueError(f"{label} postgres_sha256 does not match postgres payload")
+    if environment_sha != expected_environment_sha:
+        raise ValueError(
+            f"{label} environment_sha256 does not match component fingerprints"
+        )
 
 
 def _scalar_changes(before: dict[str, Any], after: dict[str, Any], *, keys: Iterable[str] | None = None) -> dict[str, dict[str, Any]]:

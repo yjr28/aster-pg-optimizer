@@ -3,10 +3,22 @@ from copy import deepcopy
 import pytest
 
 from aster.benchmarks import compare_benchmark_environments, validate_perturbation
+from aster.benchmarks.environment import _canonical_sha256
 
 
-def _environment(sha="a"*64):
-    return {
+def _refresh_hashes(environment):
+    environment["host_sha256"] = _canonical_sha256(environment["host"])
+    environment["postgres_sha256"] = _canonical_sha256(environment["postgres"])
+    environment["environment_sha256"] = _canonical_sha256({
+        "schema_version": 1,
+        "host_sha256": environment["host_sha256"],
+        "postgres_sha256": environment["postgres_sha256"],
+    })
+    return environment
+
+
+def _environment():
+    environment = {
         "captured_at_utc":"2026-09-04T00:00:00+00:00",
         "host":{
             "system":"Linux","release":"6.8","machine":"x86_64","platform":"Linux-6.8",
@@ -22,21 +34,19 @@ def _environment(sha="a"*64):
             "statistics_state":[{"schema_name":"public","relation_name":"orders","n_live_tup":100,"n_dead_tup":0,"last_analyze":"2026-09-04T00:00:00+00:00","last_autoanalyze":None,"analyze_count":1,"autoanalyze_count":0}],
             "statistics_targets":[{"schema_name":"public","relation_name":"orders","column_name":"id","statistics_target":-1}],
         },
-        "host_sha256":"c"*64,
-        "postgres_sha256":"d"*64,
-        "environment_sha256":sha,
     }
+    return _refresh_hashes(environment)
 
 
 def _multi_change_diff():
-    before=_environment("a"*64)
+    before=_environment()
     after=deepcopy(before)
-    after["environment_sha256"]="b"*64
     after["postgres"]["settings"]["work_mem"]["setting"]="65536"
     after["postgres"]["database_size_bytes"]=1200
     after["postgres"]["indexes"]=[]
     after["postgres"]["statistics_state"][0]["n_live_tup"]=250
     after["postgres"]["statistics_state"][0]["last_analyze"]="2026-09-04T01:00:00+00:00"
+    _refresh_hashes(after)
     return compare_benchmark_environments(before,after)
 
 
@@ -53,7 +63,7 @@ def test_environment_diff_classifies_semantic_database_changes():
 
 
 def test_environment_diff_ignores_capture_timestamp_when_fingerprint_is_same():
-    before=_environment("a"*64)
+    before=_environment()
     after=deepcopy(before)
     after["captured_at_utc"]="2026-09-04T03:00:00+00:00"
     diff=compare_benchmark_environments(before,after)
@@ -84,7 +94,7 @@ def test_perturbation_validation_rejects_unexpected_confounders_and_requires_dec
     assert statistics_only.unexpected_sections == ("indexes","postgres_metadata","settings")
     assert not statistics_only.fingerprint_evidence_mismatch
 
-    no_statistics=compare_benchmark_environments(_environment("a"*64),_environment("a"*64))
+    no_statistics=compare_benchmark_environments(_environment(),_environment())
     missing=validate_perturbation(
         no_statistics,
         allowed_sections=("statistics_state",),
@@ -103,27 +113,38 @@ def test_perturbation_validation_rejects_unexpected_confounders_and_requires_dec
         )
 
 
-def test_perturbation_validation_rejects_unexplained_fingerprint_drift():
-    diff=compare_benchmark_environments(_environment("a"*64),_environment("b"*64))
-    assert diff.changed_sections == ()
-    assert not diff.identical_fingerprint
+def test_environment_diff_rejects_tampered_environment_fingerprint():
+    before=_environment()
+    after=deepcopy(before)
+    after["environment_sha256"]="b"*64
 
-    validation=validate_perturbation(diff,allowed_sections=())
-    assert not validation.valid
-    assert validation.observed_sections == ()
-    assert validation.unexpected_sections == ()
-    assert validation.missing_required_sections == ()
-    assert validation.unexplained_fingerprint_change
-    assert not validation.fingerprint_evidence_mismatch
-    assert validation.to_jsonable()["unexplained_fingerprint_change"] is True
+    with pytest.raises(
+        ValueError,
+        match="environment_sha256 does not match component fingerprints",
+    ):
+        compare_benchmark_environments(before,after)
+
+
+def test_environment_diff_rejects_tampered_component_fingerprints():
+    before=_environment()
+
+    after=deepcopy(before)
+    after["host"]["cpu_count"]=16
+    with pytest.raises(ValueError,match="host_sha256 does not match host payload"):
+        compare_benchmark_environments(before,after)
+
+    after=deepcopy(before)
+    after["postgres"]["database_size_bytes"]=1200
+    with pytest.raises(ValueError,match="postgres_sha256 does not match postgres payload"):
+        compare_benchmark_environments(before,after)
 
 
 def test_perturbation_validation_rejects_unclassified_postgres_change_with_allowed_change():
-    before=_environment("a"*64)
+    before=_environment()
     after=deepcopy(before)
-    after["environment_sha256"]="b"*64
     after["postgres"]["statistics_state"][0]["n_live_tup"]=250
     after["postgres"]["extension_versions"]={"pg_stat_statements":"1.11"}
+    _refresh_hashes(after)
 
     diff=compare_benchmark_environments(before,after)
     assert diff.changed_sections == ("statistics_state",)
@@ -144,24 +165,10 @@ def test_perturbation_validation_rejects_unclassified_postgres_change_with_allow
     assert not validation.fingerprint_evidence_mismatch
 
 
-def test_perturbation_validation_rejects_semantic_change_with_identical_fingerprint():
-    before=_environment("a"*64)
+def test_environment_diff_rejects_semantic_change_with_stale_fingerprint():
+    before=_environment()
     after=deepcopy(before)
     after["postgres"]["statistics_state"][0]["n_live_tup"]=250
 
-    diff=compare_benchmark_environments(before,after)
-    assert diff.identical_fingerprint
-    assert diff.changed_sections == ("statistics_state",)
-
-    validation=validate_perturbation(
-        diff,
-        allowed_sections=("statistics_state",),
-        required_sections=("statistics_state",),
-    )
-    assert not validation.valid
-    assert validation.observed_sections == ("statistics_state",)
-    assert validation.unexpected_sections == ()
-    assert validation.missing_required_sections == ()
-    assert not validation.unexplained_fingerprint_change
-    assert validation.fingerprint_evidence_mismatch
-    assert validation.to_jsonable()["fingerprint_evidence_mismatch"] is True
+    with pytest.raises(ValueError,match="postgres_sha256 does not match postgres payload"):
+        compare_benchmark_environments(before,after)
