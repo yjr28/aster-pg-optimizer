@@ -70,6 +70,7 @@ def test_perturbation_validation_rejects_unexpected_confounders_and_requires_dec
     )
     assert valid.valid
     assert valid.missing_required_sections == ()
+    assert not valid.unexplained_fingerprint_change
 
     statistics_only=validate_perturbation(
         diff,
@@ -87,6 +88,7 @@ def test_perturbation_validation_rejects_unexpected_confounders_and_requires_dec
     )
     assert not missing.valid
     assert missing.missing_required_sections == ("statistics_state",)
+    assert not missing.unexplained_fingerprint_change
 
     with pytest.raises(ValueError,match="subset"):
         validate_perturbation(
@@ -94,3 +96,17 @@ def test_perturbation_validation_rejects_unexpected_confounders_and_requires_dec
             allowed_sections=("settings",),
             required_sections=("indexes",),
         )
+
+
+def test_perturbation_validation_rejects_unexplained_fingerprint_drift():
+    diff=compare_benchmark_environments(_environment("a"*64),_environment("b"*64))
+    assert diff.changed_sections == ()
+    assert not diff.identical_fingerprint
+
+    validation=validate_perturbation(diff,allowed_sections=())
+    assert not validation.valid
+    assert validation.observed_sections == ()
+    assert validation.unexpected_sections == ()
+    assert validation.missing_required_sections == ()
+    assert validation.unexplained_fingerprint_change
+    assert validation.to_jsonable()["unexplained_fingerprint_change"] is True
