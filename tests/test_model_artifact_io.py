@@ -215,3 +215,36 @@ def test_save_model_syncs_directory_after_publishing_pair(tmp_path, monkeypatch)
 
     assert events.count("replace") == 2
     assert events[-1] == "fsync"
+
+
+def test_save_model_syncs_backup_directory_entry_before_first_publish(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "model.joblib"
+    path.write_bytes(b"published-model")
+    path.with_suffix(path.suffix + ".metadata.json").write_text(
+        '{"version": "old"}\n', encoding="utf-8"
+    )
+    events: list[str] = []
+
+    def write_new_model(model, target):
+        Path(target).write_bytes(b"complete-new-model")
+
+    original_replace = model_io.os.replace
+    original_directory_sync = model_io._fsync_directory
+
+    def record_replace(src, dst):
+        events.append("replace")
+        return original_replace(src, dst)
+
+    def record_directory_sync(directory):
+        events.append("directory-fsync")
+        return original_directory_sync(directory)
+
+    monkeypatch.setattr(model_io.joblib, "dump", write_new_model)
+    monkeypatch.setattr(model_io.os, "replace", record_replace)
+    monkeypatch.setattr(model_io, "_fsync_directory", record_directory_sync)
+
+    save_model(path, RuntimeEnsemble(), {"version": "new"})
+
+    assert events[0:2] == ["directory-fsync", "replace"]
