@@ -120,3 +120,31 @@ def test_save_model_syncs_staged_bytes_before_first_publish(tmp_path, monkeypatc
     save_model(path, RuntimeEnsemble(), {"version": "new"})
 
     assert first_publish_sync_count == [2]
+
+
+def test_save_model_syncs_directory_after_publishing_pair(tmp_path, monkeypatch):
+    path = tmp_path / "model.joblib"
+    events: list[str] = []
+
+    def write_new_model(model, target):
+        Path(target).write_bytes(b"complete-new-model")
+
+    original_fsync = model_io.os.fsync
+    original_replace = model_io.os.replace
+
+    def record_fsync(fd):
+        events.append("fsync")
+        return original_fsync(fd)
+
+    def record_replace(src, dst):
+        events.append("replace")
+        return original_replace(src, dst)
+
+    monkeypatch.setattr(model_io.joblib, "dump", write_new_model)
+    monkeypatch.setattr(model_io.os, "fsync", record_fsync)
+    monkeypatch.setattr(model_io.os, "replace", record_replace)
+
+    save_model(path, RuntimeEnsemble(), {"version": "new"})
+
+    assert events.count("replace") == 2
+    assert events[-1] == "fsync"
