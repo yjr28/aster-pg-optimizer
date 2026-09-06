@@ -95,6 +95,42 @@ def test_save_model_restores_published_pair_when_metadata_publish_fails(
     assert metadata_path.read_text(encoding="utf-8") == '{"version": "old"}\n'
 
 
+def test_save_model_retains_synced_backup_when_rollback_publish_fails(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "model.joblib"
+    metadata_path = path.with_suffix(path.suffix + ".metadata.json")
+    path.write_bytes(b"published-model")
+    metadata_path.write_text('{"version": "old"}\n', encoding="utf-8")
+
+    def write_new_model(model, target):
+        Path(target).write_bytes(b"complete-new-model")
+
+    original_replace = model_io.os.replace
+    publish_count = 0
+
+    def fail_metadata_and_rollback_publish(src, dst):
+        nonlocal publish_count
+        publish_count += 1
+        if publish_count == 2 and Path(dst) == metadata_path:
+            raise OSError("simulated metadata publish failure")
+        if publish_count == 3 and Path(dst) == path:
+            raise OSError("simulated rollback publish failure")
+        return original_replace(src, dst)
+
+    monkeypatch.setattr(model_io.joblib, "dump", write_new_model)
+    monkeypatch.setattr(model_io.os, "replace", fail_metadata_and_rollback_publish)
+
+    with pytest.raises(OSError, match="simulated rollback publish failure"):
+        save_model(path, RuntimeEnsemble(), {"version": "new"})
+
+    backups = list(tmp_path.glob(".model.joblib.backup.*.tmp"))
+    assert len(backups) == 1
+    assert backups[0].read_bytes() == b"published-model"
+    assert path.read_bytes() == b"complete-new-model"
+    assert metadata_path.read_text(encoding="utf-8") == '{"version": "old"}\n'
+
+
 def test_save_model_syncs_staged_bytes_before_first_publish(tmp_path, monkeypatch):
     path = tmp_path / "model.joblib"
     synced_fds: list[int] = []
