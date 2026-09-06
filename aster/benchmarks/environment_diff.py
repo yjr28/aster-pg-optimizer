@@ -299,8 +299,10 @@ def _require_environment(payload: dict[str, Any], label: str) -> None:
             raise ValueError(f"{label} host field {field} has invalid type")
     for field in _HOST_OPTIONAL_INT_FIELDS:
         value = host[field]
-        if value is not None and (not isinstance(value, int) or isinstance(value, bool)):
-            raise ValueError(f"{label} host field {field} has invalid type")
+        if value is not None and (
+            not isinstance(value, int) or isinstance(value, bool) or value < 0
+        ):
+            raise ValueError(f"{label} host field {field} has invalid type or value")
 
     missing_postgres = sorted(_MODELED_POSTGRES_KEYS - postgres.keys())
     if missing_postgres:
