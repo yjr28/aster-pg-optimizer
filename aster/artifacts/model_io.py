@@ -11,10 +11,11 @@ from aster.models import RuntimeEnsemble
 
 def save_model(path: str | Path, model: RuntimeEnsemble, metadata: dict[str, Any]) -> None:
     path = Path(path)
+    metadata_text = json.dumps(metadata, indent=2, sort_keys=True) + "\n"
     path.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(model, path)
     path.with_suffix(path.suffix + ".metadata.json").write_text(
-        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        metadata_text,
         encoding="utf-8",
     )
 
