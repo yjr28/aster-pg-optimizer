@@ -16,6 +16,17 @@ ENVIRONMENT_DIFF_SECTIONS = frozenset({
     "statistics_targets",
 })
 
+_MODELED_HOST_KEYS = frozenset({
+    "system",
+    "release",
+    "machine",
+    "platform",
+    "cpu_count",
+    "cpu_model",
+    "memory_total_bytes",
+    "python_version",
+})
+
 _MODELED_POSTGRES_KEYS = frozenset({
     "server_version",
     "server_version_num",
@@ -164,6 +175,10 @@ def _require_environment(payload: dict[str, Any], label: str) -> None:
     postgres = payload.get("postgres")
     if not isinstance(host, dict) or not isinstance(postgres, dict):
         raise ValueError(f"{label} host/postgres environment sections must be objects")
+
+    missing_host = sorted(_MODELED_HOST_KEYS - host.keys())
+    if missing_host:
+        raise ValueError(f"{label} host snapshot missing modeled fields: {missing_host}")
 
     missing_postgres = sorted(_MODELED_POSTGRES_KEYS - postgres.keys())
     if missing_postgres:
