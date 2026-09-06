@@ -82,6 +82,23 @@ def test_environment_diff_rejects_invalid_capture_timestamp_type(invalid_value):
         compare_benchmark_environments(before, after)
 
 
+@pytest.mark.parametrize(
+    "invalid_value",
+    (
+        "not-a-timestamp",
+        "2026-09-06T00:00:00",
+        "2026-09-06T00:00:00+01:00",
+    ),
+)
+def test_environment_diff_rejects_non_utc_capture_timestamp_evidence(invalid_value):
+    before = _environment()
+    after = deepcopy(before)
+    after["captured_at_utc"] = invalid_value
+
+    with pytest.raises(ValueError, match=r"captured_at_utc must be an ISO-8601 UTC timestamp"):
+        compare_benchmark_environments(before, after)
+
+
 @pytest.mark.parametrize("field", ("cpu_count", "memory_total_bytes"))
 def test_environment_diff_rejects_negative_host_capacity_evidence(field):
     before = _environment()
