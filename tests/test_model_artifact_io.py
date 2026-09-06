@@ -122,6 +122,37 @@ def test_save_model_syncs_staged_bytes_before_first_publish(tmp_path, monkeypatc
     assert first_publish_sync_count == [2]
 
 
+def test_save_model_syncs_rollback_backup_before_first_publish(tmp_path, monkeypatch):
+    path = tmp_path / "model.joblib"
+    path.write_bytes(b"published-model")
+    path.with_suffix(path.suffix + ".metadata.json").write_text(
+        '{"version": "old"}\n', encoding="utf-8"
+    )
+    synced_fds: list[int] = []
+    first_publish_sync_count: list[int] = []
+
+    def write_new_model(model, target):
+        Path(target).write_bytes(b"complete-new-model")
+
+    def record_fsync(fd):
+        synced_fds.append(fd)
+
+    original_replace = model_io.os.replace
+
+    def record_first_publish(src, dst):
+        if not first_publish_sync_count:
+            first_publish_sync_count.append(len(synced_fds))
+        return original_replace(src, dst)
+
+    monkeypatch.setattr(model_io.joblib, "dump", write_new_model)
+    monkeypatch.setattr(model_io.os, "fsync", record_fsync)
+    monkeypatch.setattr(model_io.os, "replace", record_first_publish)
+
+    save_model(path, RuntimeEnsemble(), {"version": "new"})
+
+    assert first_publish_sync_count == [3]
+
+
 def test_save_model_syncs_directory_after_publishing_pair(tmp_path, monkeypatch):
     path = tmp_path / "model.joblib"
     events: list[str] = []
