@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass
 from typing import Any, Iterable
 
@@ -97,6 +98,28 @@ _CATALOG_ROW_FIELDS = {
         "statistics_target",
     }),
 }
+
+_CATALOG_TEXT_FIELDS = frozenset({
+    "relkind",
+    "relpersistence",
+    "index_definition",
+})
+
+_CATALOG_NONNEGATIVE_INT_FIELDS = frozenset({
+    "pages",
+    "n_live_tup",
+    "n_dead_tup",
+    "analyze_count",
+    "autoanalyze_count",
+})
+
+_CATALOG_OPTIONAL_TEXT_FIELDS = frozenset({
+    "last_analyze",
+    "last_autoanalyze",
+})
+
+_CATALOG_INT_FIELDS = frozenset({"statistics_target"})
+_CATALOG_FINITE_NUMBER_FIELDS = frozenset({"estimated_rows"})
 
 
 @dataclass(frozen=True)
@@ -323,6 +346,33 @@ def _scalar_changes(before: dict[str, Any], after: dict[str, Any], *, keys: Iter
     return changes
 
 
+def _require_catalog_row_values(row: dict[str, Any], label: str) -> None:
+    for field in _CATALOG_TEXT_FIELDS & row.keys():
+        value = row[field]
+        if not isinstance(value, str) or value == "":
+            raise ValueError(f"{label} row field {field} has invalid type or value: {row}")
+    for field in _CATALOG_NONNEGATIVE_INT_FIELDS & row.keys():
+        value = row[field]
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise ValueError(f"{label} row field {field} has invalid type or value: {row}")
+    for field in _CATALOG_OPTIONAL_TEXT_FIELDS & row.keys():
+        value = row[field]
+        if value is not None and not isinstance(value, str):
+            raise ValueError(f"{label} row field {field} has invalid type: {row}")
+    for field in _CATALOG_INT_FIELDS & row.keys():
+        value = row[field]
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise ValueError(f"{label} row field {field} has invalid type: {row}")
+    for field in _CATALOG_FINITE_NUMBER_FIELDS & row.keys():
+        value = row[field]
+        if (
+            not isinstance(value, (int, float))
+            or isinstance(value, bool)
+            or not math.isfinite(value)
+        ):
+            raise ValueError(f"{label} row field {field} has invalid type or value: {row}")
+
+
 def _keyed_rows(
     rows: Any,
     *,
@@ -345,6 +395,7 @@ def _keyed_rows(
         key = tuple(row.get(field) for field in key_fields)
         if any(not isinstance(value, str) or value == "" for value in key):
             raise ValueError(f"{label} row has invalid identity fields {key_fields}: {row}")
+        _require_catalog_row_values(row, label)
         if key in keyed:
             raise ValueError(f"duplicate {label} identity {key}")
         keyed[key] = row
