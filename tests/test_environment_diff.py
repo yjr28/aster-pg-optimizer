@@ -137,3 +137,26 @@ def test_perturbation_validation_rejects_unclassified_postgres_change_with_allow
     assert validation.unexpected_sections == ()
     assert validation.missing_required_sections == ()
     assert validation.unexplained_fingerprint_change
+
+
+def test_perturbation_validation_rejects_semantic_change_with_identical_fingerprint():
+    before=_environment("a"*64)
+    after=deepcopy(before)
+    after["postgres"]["statistics_state"][0]["n_live_tup"]=250
+
+    diff=compare_benchmark_environments(before,after)
+    assert diff.identical_fingerprint
+    assert diff.changed_sections == ("statistics_state",)
+
+    validation=validate_perturbation(
+        diff,
+        allowed_sections=("statistics_state",),
+        required_sections=("statistics_state",),
+    )
+    assert not validation.valid
+    assert validation.observed_sections == ("statistics_state",)
+    assert validation.unexpected_sections == ()
+    assert validation.missing_required_sections == ()
+    assert not validation.unexplained_fingerprint_change
+    assert validation.fingerprint_evidence_mismatch
+    assert validation.to_jsonable()["fingerprint_evidence_mismatch"] is True

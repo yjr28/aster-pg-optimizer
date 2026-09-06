@@ -86,6 +86,7 @@ class PerturbationValidation:
     unexpected_sections: tuple[str, ...]
     missing_required_sections: tuple[str, ...]
     unexplained_fingerprint_change: bool
+    fingerprint_evidence_mismatch: bool
 
     def to_jsonable(self) -> dict[str, Any]:
         return asdict(self)
@@ -104,6 +105,8 @@ def validate_perturbation(
     when a perturbation legitimately changes more than one section. A changed
     environment fingerprint with no modeled semantic change, or a change in an
     unmodeled PostgreSQL snapshot field, is rejected as unexplained evidence drift.
+    Modeled semantic changes paired with an identical environment fingerprint are
+    also rejected because the semantic evidence contradicts the recorded identity.
     """
     allowed = frozenset(allowed_sections)
     required = frozenset(required_sections)
@@ -118,14 +121,21 @@ def validate_perturbation(
     unexplained_fingerprint_change = bool(diff.unclassified_postgres_changes) or (
         not diff.identical_fingerprint and not observed
     )
+    fingerprint_evidence_mismatch = diff.identical_fingerprint and bool(observed)
     return PerturbationValidation(
-        valid=not unexpected and not missing and not unexplained_fingerprint_change,
+        valid=(
+            not unexpected
+            and not missing
+            and not unexplained_fingerprint_change
+            and not fingerprint_evidence_mismatch
+        ),
         allowed_sections=tuple(sorted(allowed)),
         required_sections=tuple(sorted(required)),
         observed_sections=tuple(sorted(observed)),
         unexpected_sections=unexpected,
         missing_required_sections=missing,
         unexplained_fingerprint_change=unexplained_fingerprint_change,
+        fingerprint_evidence_mismatch=fingerprint_evidence_mismatch,
     )
 
 
