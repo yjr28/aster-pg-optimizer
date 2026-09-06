@@ -52,3 +52,12 @@ def test_environment_hash_rejects_non_json_catalog_evidence(monkeypatch):
 
     with pytest.raises(TypeError, match="JSON serializable"):
         capture_benchmark_environment(FakeRunner(snapshot))
+
+
+@pytest.mark.parametrize("non_finite", (float("nan"), float("inf"), float("-inf")))
+def test_environment_hash_rejects_non_finite_catalog_evidence(monkeypatch, non_finite):
+    monkeypatch.setattr("aster.benchmarks.environment.capture_host_environment", _host)
+    snapshot={"database_size_bytes":non_finite,"indexes":[]}
+
+    with pytest.raises(ValueError, match="Out of range float values are not JSON compliant"):
+        capture_benchmark_environment(FakeRunner(snapshot))
