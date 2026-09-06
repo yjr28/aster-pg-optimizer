@@ -79,6 +79,10 @@ def save_model(path: str | Path, model: RuntimeEnsemble, metadata: dict[str, Any
                 path.unlink(missing_ok=True)
             _fsync_directory(path.parent)
             raise
+
+        if backup_model_path is not None:
+            backup_model_path.unlink()
+            backup_model_path = None
         _fsync_directory(path.parent)
     finally:
         staged_model_path.unlink(missing_ok=True)
