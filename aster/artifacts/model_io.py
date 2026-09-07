@@ -25,11 +25,27 @@ def _fsync_directory(path: Path) -> None:
         os.close(directory_fd)
 
 
+def _mkdir_with_synced_entries(path: Path) -> None:
+    missing_directories: list[Path] = []
+    cursor = path
+    while not cursor.exists():
+        missing_directories.append(cursor)
+        cursor = cursor.parent
+
+    path.mkdir(parents=True, exist_ok=True)
+
+    # A directory fsync makes entries inside that directory durable, but does
+    # not make the directory's own entry durable in its parent. Sync the
+    # parent of every directory we created before staging or publishing files.
+    for created_directory in missing_directories:
+        _fsync_directory(created_directory.parent)
+
+
 def save_model(path: str | Path, model: RuntimeEnsemble, metadata: dict[str, Any]) -> None:
     path = Path(path)
     metadata_path = path.with_suffix(path.suffix + ".metadata.json")
     metadata_text = json.dumps(metadata, indent=2, sort_keys=True) + "\n"
-    path.parent.mkdir(parents=True, exist_ok=True)
+    _mkdir_with_synced_entries(path.parent)
 
     model_fd, staged_model_name = tempfile.mkstemp(
         prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
