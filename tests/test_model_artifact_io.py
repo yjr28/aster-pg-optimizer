@@ -277,3 +277,37 @@ def test_save_model_removes_backup_before_final_directory_sync(tmp_path, monkeyp
     save_model(path, RuntimeEnsemble(), {"version": "new"})
 
     assert backup_presence_at_sync == [True, False]
+
+
+def test_save_model_retains_backup_when_published_pair_directory_sync_fails(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "model.joblib"
+    metadata_path = path.with_suffix(path.suffix + ".metadata.json")
+    path.write_bytes(b"published-model")
+    metadata_path.write_text('{"version": "old"}\n', encoding="utf-8")
+
+    def write_new_model(model, target):
+        Path(target).write_bytes(b"complete-new-model")
+
+    original_directory_sync = model_io._fsync_directory
+    sync_count = 0
+
+    def fail_pair_directory_sync(directory):
+        nonlocal sync_count
+        sync_count += 1
+        if sync_count == 2:
+            raise OSError("simulated published-pair directory sync failure")
+        return original_directory_sync(directory)
+
+    monkeypatch.setattr(model_io.joblib, "dump", write_new_model)
+    monkeypatch.setattr(model_io, "_fsync_directory", fail_pair_directory_sync)
+
+    with pytest.raises(OSError, match="simulated published-pair directory sync failure"):
+        save_model(path, RuntimeEnsemble(), {"version": "new"})
+
+    backups = list(tmp_path.glob(".model.joblib.backup.*.tmp"))
+    assert len(backups) == 1
+    assert backups[0].read_bytes() == b"published-model"
+    assert path.read_bytes() == b"complete-new-model"
+    assert metadata_path.read_text(encoding="utf-8") == '{\n  "version": "new"\n}\n'
