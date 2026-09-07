@@ -82,9 +82,14 @@ def save_model(path: str | Path, model: RuntimeEnsemble, metadata: dict[str, Any
 
         if backup_model_path is not None:
             # First make the newly published pair's directory entries durable
-            # while the synced prior-model backup is still available. Only after
-            # that succeeds do we remove the backup and sync the cleanup.
-            _fsync_directory(path.parent)
+            # while the synced prior-model backup is still available. If that
+            # sync fails, preserve the backup for explicit recovery rather than
+            # allowing finally-cleanup to discard the strongest prior evidence.
+            try:
+                _fsync_directory(path.parent)
+            except Exception:
+                backup_model_path = None
+                raise
             backup_model_path.unlink()
             backup_model_path = None
         _fsync_directory(path.parent)
