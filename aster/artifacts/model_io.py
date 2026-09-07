@@ -67,17 +67,23 @@ def save_model(path: str | Path, model: RuntimeEnsemble, metadata: dict[str, Any
             if had_published_model:
                 assert backup_model_path is not None
                 try:
-                    os.replace(backup_model_path, path)
+                    # Restore from a separate synced copy so the durable backup
+                    # remains independent until the rollback rename itself has
+                    # been made durable in the parent directory.
+                    shutil.copyfile(backup_model_path, staged_model_path)
+                    _fsync_file(staged_model_path)
+                    os.replace(staged_model_path, path)
+                    _fsync_directory(path.parent)
                 except Exception:
-                    # Preserve the synced copy of the previously published model
-                    # when rollback itself cannot publish it. The caller receives
-                    # the rollback failure and the backup remains available for
-                    # explicit recovery rather than being discarded in cleanup.
+                    # Preserve the synced prior-model backup when rollback
+                    # preparation, publication, or directory sync cannot be
+                    # completed. The caller can then recover explicitly from
+                    # evidence that was durable before publication began.
                     backup_model_path = None
                     raise
             else:
                 path.unlink(missing_ok=True)
-            _fsync_directory(path.parent)
+                _fsync_directory(path.parent)
             raise
 
         if backup_model_path is not None:
