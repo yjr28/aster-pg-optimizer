@@ -112,7 +112,15 @@ def save_model(path: str | Path, model: RuntimeEnsemble, metadata: dict[str, Any
                 backup_model_path = None
                 backup_metadata_path = None
                 raise
-            backup_model_path.unlink()
+            try:
+                backup_model_path.unlink()
+            except Exception:
+                # A failed cleanup must not be retried by finally: the synced
+                # prior-model backup, and its matching metadata backup when
+                # present, are stronger evidence than an unsynced retry-removal.
+                backup_model_path = None
+                backup_metadata_path = None
+                raise
             backup_model_path = None
             if backup_metadata_path is not None:
                 backup_metadata_path.unlink()
