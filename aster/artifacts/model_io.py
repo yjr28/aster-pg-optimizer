@@ -112,6 +112,41 @@ def save_model(path: str | Path, model: RuntimeEnsemble, metadata: dict[str, Any
                     backup_model_path = None
                     backup_metadata_path = None
                     raise
+
+                # The restored published state is now durable. Remove redundant
+                # backup entries explicitly and sync those removals so a crash
+                # does not resurrect stale recovery artifacts after a completed
+                # rollback. Cleanup remains best-effort and must not replace the
+                # original metadata-publication error seen by the caller.
+                cleanup_changed = False
+                try:
+                    backup_model_path.unlink()
+                except Exception:
+                    # Do not retry failed cleanup in finally. Keeping the synced
+                    # prior evidence is safer than an unsynced retry-removal.
+                    backup_model_path = None
+                    backup_metadata_path = None
+                else:
+                    backup_model_path = None
+                    cleanup_changed = True
+                    if backup_metadata_path is not None:
+                        try:
+                            backup_metadata_path.unlink()
+                        except Exception:
+                            # The restored published pair is already durable;
+                            # retain metadata evidence when its cleanup fails.
+                            backup_metadata_path = None
+                        else:
+                            backup_metadata_path = None
+
+                if cleanup_changed:
+                    try:
+                        _fsync_directory(path.parent)
+                    except Exception:
+                        # Rollback itself was synced above. A cleanup-sync
+                        # failure can leave stale backup entries after a crash,
+                        # but must not hide the original publication failure.
+                        pass
             else:
                 path.unlink(missing_ok=True)
                 _fsync_directory(path.parent)
