@@ -276,7 +276,10 @@ def test_save_model_removes_backup_before_final_directory_sync(tmp_path, monkeyp
 
     save_model(path, RuntimeEnsemble(), {"version": "new"})
 
-    assert backup_presence_at_sync == [True, False]
+    # The backup exists for the pre-publish durability sync and for the first
+    # post-publish sync that makes the new pair durable. Cleanup is then synced
+    # after the backup has been removed.
+    assert backup_presence_at_sync == [True, True, False]
 
 
 def test_save_model_retains_backup_when_published_pair_directory_sync_fails(
