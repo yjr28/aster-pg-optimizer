@@ -123,7 +123,15 @@ def save_model(path: str | Path, model: RuntimeEnsemble, metadata: dict[str, Any
                 raise
             backup_model_path = None
             if backup_metadata_path is not None:
-                backup_metadata_path.unlink()
+                try:
+                    backup_metadata_path.unlink()
+                except Exception:
+                    # Do not turn a failed metadata-evidence cleanup into an
+                    # unsynced retry-removal in finally. At this point the model
+                    # backup was already removed, so retain only the evidence
+                    # that actually remains rather than claiming a complete pair.
+                    backup_metadata_path = None
+                    raise
                 backup_metadata_path = None
         _fsync_directory(path.parent)
     finally:
