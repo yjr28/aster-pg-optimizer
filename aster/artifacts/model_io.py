@@ -139,12 +139,19 @@ def save_model(path: str | Path, model: RuntimeEnsemble, metadata: dict[str, Any
                         else:
                             backup_metadata_path = None
 
+                # The failed metadata publication leaves its staged file behind.
+                # Remove that staging entry before the rollback cleanup sync so
+                # one durability boundary covers both staging and backup cleanup.
+                if staged_metadata_path.exists():
+                    staged_metadata_path.unlink()
+                    cleanup_changed = True
+
                 if cleanup_changed:
                     try:
                         _fsync_directory(path.parent)
                     except Exception:
                         # Rollback itself was synced above. A cleanup-sync
-                        # failure can leave stale backup entries after a crash,
+                        # failure can leave stale cleanup entries after a crash,
                         # but must not hide the original publication failure.
                         pass
             else:
