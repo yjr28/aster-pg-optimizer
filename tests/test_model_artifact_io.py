@@ -227,9 +227,9 @@ def test_save_model_syncs_rollback_backup_before_first_publish(tmp_path, monkeyp
 
     save_model(path, RuntimeEnsemble(), {"version": "new"})
 
-    # Staged metadata, staged model, rollback backup bytes, and the backup's
-    # parent-directory entry are all synced before publication starts.
-    assert first_publish_sync_count == [4]
+    # Staged metadata, staged model, prior model and metadata backup bytes, and
+    # the backups' parent-directory entries are synced before publication starts.
+    assert first_publish_sync_count == [5]
 
 
 def test_save_model_syncs_directory_after_publishing_pair(tmp_path, monkeypatch):

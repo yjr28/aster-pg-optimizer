@@ -42,6 +42,7 @@ def save_model(path: str | Path, model: RuntimeEnsemble, metadata: dict[str, Any
     staged_model_path = Path(staged_model_name)
     staged_metadata_path = Path(staged_metadata_name)
     backup_model_path: Path | None = None
+    backup_metadata_path: Path | None = None
 
     try:
         staged_metadata_path.write_text(metadata_text, encoding="utf-8")
@@ -50,6 +51,7 @@ def save_model(path: str | Path, model: RuntimeEnsemble, metadata: dict[str, Any
         _fsync_file(staged_model_path)
 
         had_published_model = path.exists()
+        had_published_metadata = metadata_path.exists()
         if had_published_model:
             backup_fd, backup_model_name = tempfile.mkstemp(
                 prefix=f".{path.name}.backup.", suffix=".tmp", dir=path.parent
@@ -58,6 +60,18 @@ def save_model(path: str | Path, model: RuntimeEnsemble, metadata: dict[str, Any
             backup_model_path = Path(backup_model_name)
             shutil.copyfile(path, backup_model_path)
             _fsync_file(backup_model_path)
+
+            if had_published_metadata:
+                metadata_backup_fd, backup_metadata_name = tempfile.mkstemp(
+                    prefix=f".{metadata_path.name}.backup.",
+                    suffix=".tmp",
+                    dir=path.parent,
+                )
+                os.close(metadata_backup_fd)
+                backup_metadata_path = Path(backup_metadata_name)
+                shutil.copyfile(metadata_path, backup_metadata_path)
+                _fsync_file(backup_metadata_path)
+
             _fsync_directory(path.parent)
 
         os.replace(staged_model_path, path)
@@ -75,11 +89,12 @@ def save_model(path: str | Path, model: RuntimeEnsemble, metadata: dict[str, Any
                     os.replace(staged_model_path, path)
                     _fsync_directory(path.parent)
                 except Exception:
-                    # Preserve the synced prior-model backup when rollback
+                    # Preserve any synced prior-pair evidence when rollback
                     # preparation, publication, or directory sync cannot be
-                    # completed. The caller can then recover explicitly from
-                    # evidence that was durable before publication began.
+                    # completed. The caller can recover explicitly from copies
+                    # that were durable before publication began.
                     backup_model_path = None
+                    backup_metadata_path = None
                     raise
             else:
                 path.unlink(missing_ok=True)
@@ -88,22 +103,28 @@ def save_model(path: str | Path, model: RuntimeEnsemble, metadata: dict[str, Any
 
         if backup_model_path is not None:
             # First make the newly published pair's directory entries durable
-            # while the synced prior-model backup is still available. If that
-            # sync fails, preserve the backup for explicit recovery rather than
-            # allowing finally-cleanup to discard the strongest prior evidence.
+            # while any synced prior-pair backups are still available. If that
+            # sync fails, preserve those backups for explicit recovery rather
+            # than allowing finally-cleanup to discard the strongest evidence.
             try:
                 _fsync_directory(path.parent)
             except Exception:
                 backup_model_path = None
+                backup_metadata_path = None
                 raise
             backup_model_path.unlink()
             backup_model_path = None
+            if backup_metadata_path is not None:
+                backup_metadata_path.unlink()
+                backup_metadata_path = None
         _fsync_directory(path.parent)
     finally:
         staged_model_path.unlink(missing_ok=True)
         staged_metadata_path.unlink(missing_ok=True)
         if backup_model_path is not None:
             backup_model_path.unlink(missing_ok=True)
+        if backup_metadata_path is not None:
+            backup_metadata_path.unlink(missing_ok=True)
 
 
 def load_model(path: str | Path) -> RuntimeEnsemble:
