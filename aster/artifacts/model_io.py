@@ -186,12 +186,24 @@ def save_model(path: str | Path, model: RuntimeEnsemble, metadata: dict[str, Any
                 backup_metadata_path = None
         _fsync_directory(path.parent)
     finally:
-        staged_model_path.unlink(missing_ok=True)
-        staged_metadata_path.unlink(missing_ok=True)
+        staging_cleanup_changed = False
+        if staged_model_path.exists():
+            staged_model_path.unlink()
+            staging_cleanup_changed = True
+        if staged_metadata_path.exists():
+            staged_metadata_path.unlink()
+            staging_cleanup_changed = True
         if backup_model_path is not None:
             backup_model_path.unlink(missing_ok=True)
         if backup_metadata_path is not None:
             backup_metadata_path.unlink(missing_ok=True)
+        if staging_cleanup_changed:
+            try:
+                _fsync_directory(path.parent)
+            except Exception:
+                # Staging cleanup only runs while unwinding an earlier failure.
+                # Do not replace that primary failure with a cleanup-sync error.
+                pass
 
 
 def load_model(path: str | Path) -> RuntimeEnsemble:
