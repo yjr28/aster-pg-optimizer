@@ -184,11 +184,12 @@ def save_model(path: str | Path, model: RuntimeEnsemble, metadata: dict[str, Any
                 try:
                     backup_metadata_path.unlink()
                 except Exception:
-                    # Do not turn a failed metadata-evidence cleanup into an
-                    # unsynced retry-removal in finally. At this point the model
-                    # backup was already removed, so retain only the evidence
-                    # that actually remains rather than claiming a complete pair.
+                    # The model-backup removal succeeded but metadata evidence
+                    # remains. Sync that partial cleanup before reporting the
+                    # metadata-cleanup failure so the retained evidence state is
+                    # not stronger or weaker than the directory evidence proves.
                     backup_metadata_path = None
+                    _fsync_directory(path.parent)
                     raise
                 backup_metadata_path = None
         _fsync_directory(path.parent)
