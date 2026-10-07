@@ -15,7 +15,7 @@ A learned optimizer is easy to overclaim and hard to validate. This baseline est
 - explicit uncertainty;
 - a fallback policy;
 - tests for clear wins, uncertainty fallback, and low-margin fallback;
-- a recruiter-facing browser demo that mirrors the same scoring equation.
+- a recruiter-facing browser demo that loads this repository's `aster_ranker.py` into Pyodide and calls `rank_plans` directly.
 
 ## Run it
 
